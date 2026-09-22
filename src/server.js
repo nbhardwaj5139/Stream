@@ -808,8 +808,13 @@ export async function createServer(options = {}) {
   // Nudge everyone back into sync periodically; cheap insurance against drift
   // on connections that dropped a state message.
   const resync = setInterval(() => {
-    if (connections.size > 0) broadcastState();
-  }, 10_000);
+    if (connections.size === 0) return;
+    // Stop waiting on a buffer that is never going to finish.
+    if (room.releaseStaleHold().changed) {
+      broadcastPresence();
+    }
+    broadcastState();
+  }, 5_000);
   resync.unref?.();
 
   const originalClose = server.close.bind(server);

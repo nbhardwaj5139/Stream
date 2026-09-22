@@ -191,6 +191,12 @@ When either side starts buffering, the room pauses for everyone and shows
 *"Waiting for Sam to buffer…"*. When she recovers, it resumes. Nobody has to
 say "wait, go back" — that's `--no-auto-pause` if you'd rather it didn't.
 
+That wait is bounded at 30 seconds. A viewer whose video never reaches a
+playable state would otherwise hold the film for everyone indefinitely, and
+since a paused video may never buffer enough to announce that it recovered,
+the wait could not end on its own. After 30 seconds the room plays on without
+them.
+
 ## Quality, and what 4K actually costs
 
 There are two ways a file reaches her, and the quality selector in the player
@@ -301,7 +307,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 116 unit and integration tests, no dependencies needed
+npm test          # 119 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright

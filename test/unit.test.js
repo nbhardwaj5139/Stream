@@ -528,3 +528,61 @@ test('a passcode is accepted whatever case it is typed in', () => {
   assert.equal(verifyPasscode('POPCORN', chosen), true);
   assert.equal(verifyPasscode('popcorn', chosen), true);
 });
+
+test('the room gives up waiting on a buffer that never finishes', () => {
+  // Otherwise one viewer whose video never reaches a playable state holds the
+  // film for everybody, for good — and a paused video may never buffer enough
+  // to report that it recovered, so the wait cannot end on its own.
+  let clock = 0;
+  const room = new Room({ clock: () => clock, maxBufferHoldMs: 30_000 });
+  const host = room.addViewer({ role: 'host' });
+  const guest = room.addViewer({ role: 'guest' });
+
+  room.applyControl(host, { action: 'select', mediaId: 'abc' });
+  room.applyControl(host, { action: 'play', position: 0 });
+
+  clock += 5000;
+  room.report(guest, { position: 5, buffering: true });
+  assert.equal(room.paused, true);
+  assert.equal(room.waitingFor, guest.id);
+
+  clock += 10_000;
+  assert.equal(room.releaseStaleHold().changed, false, 'still within the grace period');
+  assert.equal(room.paused, true);
+
+  clock += 25_000;
+  const released = room.releaseStaleHold();
+  assert.equal(released.changed, true);
+  assert.equal(released.reason, 'gave-up-waiting');
+  assert.equal(room.paused, false);
+  assert.equal(room.waitingFor, null);
+});
+
+test('a pause somebody asked for is never released by the timer', () => {
+  let clock = 0;
+  const room = new Room({ clock: () => clock, maxBufferHoldMs: 1000 });
+  const host = room.addViewer({ role: 'host' });
+  const guest = room.addViewer({ role: 'guest' });
+
+  room.applyControl(host, { action: 'play', position: 0 });
+  room.report(guest, { buffering: true });
+  room.applyControl(host, { action: 'pause', position: 3 });
+
+  clock += 60_000;
+  assert.equal(room.releaseStaleHold().changed, false);
+  assert.equal(room.paused, true, 'it stays paused because a person paused it');
+});
+
+test('recovering normally still resumes without waiting for the timer', () => {
+  let clock = 0;
+  const room = new Room({ clock: () => clock, maxBufferHoldMs: 30_000 });
+  const host = room.addViewer({ role: 'host' });
+  const guest = room.addViewer({ role: 'guest' });
+
+  room.applyControl(host, { action: 'play', position: 0 });
+  room.report(guest, { buffering: true });
+  clock += 2000;
+  assert.equal(room.report(guest, { buffering: false }).changed, true);
+  assert.equal(room.paused, false);
+  assert.equal(room.waitingSince, null);
+});

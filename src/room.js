@@ -20,12 +20,17 @@ export class Room {
     controlMode = 'everyone',
     libraryMode = 'host',
     autoPauseOnBuffer = true,
+    // How long the room will hold for one person's buffer before giving up.
+    // Without a bound, a viewer who never finishes loading stops the film for
+    // everyone, permanently.
+    maxBufferHoldMs = 30_000,
     clock = now,
   } = {}) {
     this.controlMode = controlMode; // 'everyone' | 'host'
     // 'host': guests never see the file list, only what is playing right now.
     this.libraryMode = libraryMode; // 'host' | 'shared'
     this.autoPauseOnBuffer = autoPauseOnBuffer;
+    this.maxBufferHoldMs = maxBufferHoldMs;
     this.clock = clock;
 
     this.mediaId = null;
@@ -43,6 +48,7 @@ export class Room {
     this.chat = [];
     this.version = 0;
     this.waitingFor = null; // viewer id we auto-paused for
+    this.waitingSince = null;
     // Why we are paused. A pause somebody asked for must never be undone by
     // the buffering logic deciding everyone has caught up.
     this.pausedBy = null; // 'user' | 'buffer'
@@ -123,6 +129,7 @@ export class Room {
 
     switch (message.action) {
       case 'play': {
+        this.waitingSince = null;
         if (typeof message.position === 'number' && Number.isFinite(message.position)) {
           this._anchor(message.position, timestamp);
         } else if (this.paused) {
@@ -144,6 +151,7 @@ export class Room {
         // Somebody asked for this, so stop waiting on anyone's buffer.
         this.pausedBy = 'user';
         this.waitingFor = null;
+        this.waitingSince = null;
         this._anchor(position, timestamp);
         return { changed: true, reason: 'pause', by: viewer.id };
       }
@@ -224,11 +232,13 @@ export class Room {
       this.pausedBy = 'buffer';
       this._anchor(frozenAt, this.clock());
       this.waitingFor = viewer.id;
+      this.waitingSince = this.clock();
       return { changed: true, reason: 'buffering', by: viewer.id };
     }
 
     if (!viewer.buffering && wasBuffering && this.waitingFor === viewer.id) {
       this.waitingFor = null;
+      this.waitingSince = null;
       // Only resume a pause we caused. If somebody hit pause while we were
       // waiting, that is the state they asked for and it stands.
       if (this.pausedBy !== 'buffer') return { changed: false };
@@ -243,6 +253,24 @@ export class Room {
     }
 
     return { changed: false };
+  }
+
+  // Called on a timer. Somebody whose video never finishes loading would
+  // otherwise hold the room for good — and a viewer who is paused may never
+  // buffer enough to say they have recovered, which makes that a deadlock
+  // rather than a wait.
+  releaseStaleHold(timestamp = this.clock()) {
+    if (!this.waitingFor || this.pausedBy !== 'buffer') return { changed: false };
+    if (this.waitingSince === null) return { changed: false };
+    if (timestamp - this.waitingSince < this.maxBufferHoldMs) return { changed: false };
+
+    const waited = this.waitingFor;
+    this.waitingFor = null;
+    this.waitingSince = null;
+    this.paused = false;
+    this.pausedBy = null;
+    this._anchor(this.anchorPosition, timestamp);
+    return { changed: true, reason: 'gave-up-waiting', by: waited };
   }
 
   addChat(viewer, text) {
@@ -266,6 +294,7 @@ export class Room {
   // it is the conversation, not the playback state.
   clearPlayback() {
     this.mediaId = null;
+    this.waitingSince = null;
     this.paused = true;
     this.rate = 1;
     this.audioTrack = 0;
