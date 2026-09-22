@@ -794,3 +794,10 @@ body.centered {
 }
 .gate[hidden] { display: none; }
 .app[hidden] { display: none; }
+
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}

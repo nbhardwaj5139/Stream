@@ -27,9 +27,17 @@ export function safeEqual(a, b) {
   return crypto.timingSafeEqual(left, right);
 }
 
+// Case is not part of a passcode. The field renders uppercase, phone keyboards
+// capitalise, laptop keyboards do not, and a code read off a screen and typed
+// back should not care — so both sides fold before hashing. Generated codes use
+// an uppercase alphabet, so nothing is given away by this.
+export function normalizePasscode(passcode) {
+  return passcode.normalize('NFKC').trim().toUpperCase();
+}
+
 // Passcodes are short by design, so hash them slowly and rate limit hard.
 export function hashPasscode(passcode, salt = crypto.randomBytes(16)) {
-  const derived = crypto.scryptSync(passcode.normalize('NFKC'), salt, SCRYPT_PARAMS.keylen, SCRYPT_PARAMS);
+  const derived = crypto.scryptSync(normalizePasscode(passcode), salt, SCRYPT_PARAMS.keylen, SCRYPT_PARAMS);
   return { salt, hash: derived };
 }
 
@@ -37,7 +45,7 @@ export function verifyPasscode(passcode, record) {
   if (!record || typeof passcode !== 'string' || passcode.length === 0) return false;
   if (passcode.length > 256) return false;
   const derived = crypto.scryptSync(
-    passcode.normalize('NFKC'),
+    normalizePasscode(passcode),
     record.salt,
     SCRYPT_PARAMS.keylen,
     SCRYPT_PARAMS

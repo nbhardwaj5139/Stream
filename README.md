@@ -279,6 +279,9 @@ browse and watch the folders you shared.
 
 - Passcodes are new for every session by default, so a code that leaks is only
   good until you restart.
+- Case is not part of a passcode. The field renders uppercase, phone keyboards
+  capitalise and laptop keyboards do not, so a code read off a screen and typed
+  back has to work either way.
 - Passcodes are hashed with scrypt and compared in constant time.
 - Wrong guesses are rate limited per address, with a global cap so the guessing
   can't just be spread across many addresses. Five wrong tries locks that
@@ -298,7 +301,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 115 unit and integration tests, no dependencies needed
+npm test          # 116 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright

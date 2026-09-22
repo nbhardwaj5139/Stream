@@ -293,10 +293,11 @@ test('4K and very high bitrate files do not default to "original"', () => {
 test('passcodes verify only against themselves', () => {
   const record = hashPasscode('POPCORN');
   assert.equal(verifyPasscode('POPCORN', record), true);
-  assert.equal(verifyPasscode('popcorn', record), false);
   assert.equal(verifyPasscode('POPCOR', record), false);
+  assert.equal(verifyPasscode('POPCORNS', record), false);
   assert.equal(verifyPasscode('', record), false);
   assert.equal(verifyPasscode('POPCORN', null), false);
+  // Case is deliberately not part of it; see the case-insensitivity test.
 });
 
 test('generated passcodes avoid letters people confuse', () => {
@@ -507,4 +508,23 @@ test('browsing is announced, but only for someone allowed to browse', () => {
   // A guest has no film list, so cannot be "choosing".
   assert.equal(room.setBrowsing(guest, true), false);
   assert.equal(guest.browsing, false);
+});
+
+test('a passcode is accepted whatever case it is typed in', () => {
+  // The field renders uppercase but holds what was typed, phone keyboards
+  // capitalise and laptop ones do not — so case cannot be part of the secret.
+  const record = hashPasscode('K7M4PQ');
+  assert.equal(verifyPasscode('K7M4PQ', record), true);
+  assert.equal(verifyPasscode('k7m4pq', record), true);
+  assert.equal(verifyPasscode('K7m4Pq', record), true);
+  assert.equal(verifyPasscode('  k7m4pq  ', record), true, 'and surrounding space is ignored');
+
+  // A different code is still a different code.
+  assert.equal(verifyPasscode('K7M4PR', record), false);
+  assert.equal(verifyPasscode('', record), false);
+
+  // A passcode set in lower case works either way round too.
+  const chosen = hashPasscode('popcorn');
+  assert.equal(verifyPasscode('POPCORN', chosen), true);
+  assert.equal(verifyPasscode('popcorn', chosen), true);
 });

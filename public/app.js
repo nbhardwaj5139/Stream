@@ -981,6 +981,14 @@ function enterRoom() {
   connect();
 }
 
+// The field is styled uppercase, which changes how it looks and not what it
+// holds. Keep the two the same so nobody sends something they cannot see.
+dom.joinPasscode.addEventListener('input', () => {
+  const start = dom.joinPasscode.selectionStart;
+  dom.joinPasscode.value = dom.joinPasscode.value.toUpperCase();
+  dom.joinPasscode.setSelectionRange(start, start);
+});
+
 dom.joinForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   dom.joinError.hidden = true;
