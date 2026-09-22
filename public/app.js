@@ -215,6 +215,7 @@ function handleMessage(message) {
       state.role = message.you.role;
       state.library = message.library ?? [];
       state.capabilities = message.capabilities ?? {};
+      screenShare.setIceServers(state.capabilities.iceServers ?? []);
       dom.btnRescan.hidden = state.role !== 'host';
       // Both sides use the same link, so say plainly which passcode got you in.
       dom.roleBadge.textContent = state.role === 'host' ? 'Host' : 'Guest';
@@ -664,7 +665,8 @@ function renderEmptyState() {
   const others = state.viewers.filter((viewer) => viewer.id !== state.me?.id);
   if (canBrowse()) {
     dom.placeholderTitle.textContent = 'Nothing playing yet';
-    dom.placeholderText.textContent = 'Pick something to watch and it will start for both of you.';
+    dom.placeholderText.textContent =
+      'Share this screen and play anything you like, or pick a file from this machine.';
   } else {
     const chooser = state.viewers.find((viewer) => viewer.browsing);
     const host = state.viewers.find((viewer) => viewer.role === 'host');
@@ -695,7 +697,10 @@ function renderPermissions() {
   dom.btnLibrary.querySelector('span').textContent = state.room?.mediaId
     ? 'Change film'
     : 'Choose a film';
-  dom.btnLibrary.classList.toggle('primary', !state.room?.mediaId);
+  // Sharing is the route that works with any file on any device, so it stays
+  // the obvious button; the library is the alternative, not the default.
+  dom.btnShare.classList.toggle('primary', !state.room?.mediaId && !screenShare.sharing);
+  dom.btnLibrary.classList.remove('primary');
   if (!allowed) closeLibrary();
 }
 
@@ -1100,9 +1105,13 @@ const screenShare = new ScreenShare({
     playVideo();
   },
   onStateChange: (id, connectionState) => {
-    if (connectionState === 'failed' && !screenShare.sharing) {
-      showOverlay('Lost the connection to their screen. Trying again…');
-    }
+    if (connectionState !== 'failed') return;
+    // Almost always a network that will not allow a direct connection.
+    const message = state.capabilities.iceServers?.length
+      ? 'Could not connect, even through the relay.'
+      : 'Could not connect directly between the two networks. A TURN relay is needed — see --turn in the README.';
+    if (screenShare.sharing) toast(message, 12_000);
+    else showOverlay(message);
   },
   onEnded: () => {
     dom.btnShare.querySelector('span').textContent = 'Share screen';
@@ -1129,8 +1138,8 @@ async function startSharing() {
     // Windows offers audio on "Entire Screen" and on a Chrome tab, but never
     // on a single window — which is the option people reach for first.
     toast(
-      'Sharing without sound. Stop, share again, choose "Entire Screen" and ' +
-        'tick "Share system audio" — a single window cannot carry audio.',
+      'Sharing without sound — the audio tick was cleared in the picker. ' +
+        'Stop, share again, and leave "Share system audio" on.',
       10_000
     );
   }
@@ -1157,9 +1166,8 @@ dom.btnShare.addEventListener('click', () => {
     control('source', { source: 'file' });
     return;
   }
-  // The picker covers anything shown now, so leave the advice on screen for
-  // after it closes as well.
-  toast('Choose "Entire Screen" and tick "Share system audio" for sound.', 12_000);
+  // The picker is narrowed to whole screens and asks for audio already, so
+  // there is nothing left to explain unless it comes back silent.
   startSharing();
 });
 

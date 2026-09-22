@@ -116,6 +116,9 @@ export async function createServer(options = {}) {
     controlMode = 'everyone',
     libraryMode = 'host',
     roomName = 'Tonight at the pictures',
+    // Extra ICE servers for screen sharing. Public STUN is enough for most
+    // connections; a TURN relay is what gets through the ones it is not.
+    iceServers = [],
     rememberDevices = false,
     resetWhenEmptyMs = 90_000,
     autoPauseOnBuffer = false,
@@ -591,6 +594,7 @@ export async function createServer(options = {}) {
         ffprobe: ffmpeg.ffprobe,
         encoder,
         assets,
+        iceServers,
         hardwareEncoding: encoder !== 'libx264',
         canToneMap: encoding.canToneMap,
         roots: session.role === 'host' ? library.roots : undefined,
@@ -720,6 +724,7 @@ export async function createServer(options = {}) {
         ffprobe: ffmpeg.ffprobe,
         encoder,
         hardwareEncoding: encoder !== 'libx264',
+        iceServers,
       },
     });
     broadcastPresence();

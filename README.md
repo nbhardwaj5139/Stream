@@ -196,7 +196,8 @@ never becomes playable cannot hold the film indefinitely.
 
 ## Sharing your screen instead
 
-There is a **Share screen** button next to the film list, host only. It switches
+**Share screen** is the main button, host only, and the one to reach for first:
+it carries anything your machine can play, at any resolution, to any browser. It switches
 the room from playing a file to sending whatever is on your screen, over a
 direct connection to each viewer. The picture never passes through the server.
 
@@ -223,8 +224,21 @@ What it costs:
   *Entire Screen* with "Share system audio" ticked. The room says so before the
   picker opens and again if nothing came through, and if the machine refuses
   audio entirely the share continues without it rather than failing.
-- **It needs a direct connection.** Public STUN servers are used and no relay,
-  so a strict corporate network can block it where plain HTTPS would not.
+- **It needs a connection the two networks will allow.** Public STUN is used by
+  default, which is enough when both routers accept an incoming connection.
+  Some mobile carriers and locked-down networks will not, and then nothing
+  connects without a relay to pass the media through:
+
+  ```bash
+  node bin/stream.js --turn turn:relay.example.com:3478 \
+                     --turn-user someone --turn-pass secret
+  ```
+
+  Any TURN service works; several offer a free tier that is ample for two
+  people. If a share fails to connect, the room says whether a relay is
+  configured, so you can tell this cause apart from the others. File streaming
+  is plain HTTPS through the tunnel and never has this problem — which is the
+  main reason to keep it.
 
 Playback controls do nothing during a share, because a live stream has nothing
 to seek. Picking a film from the library ends the share by itself, and the room

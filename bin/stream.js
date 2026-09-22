@@ -26,6 +26,10 @@ Options
       --host-only           Only you can play/pause/seek; she just watches
       --shared-library      Let her browse your files too (default: host only)
       --room-name <text>    Heading on the passcode screen
+      --turn <url>          TURN relay for screen sharing, e.g.
+                            turn:relay.example.com:3478 (repeatable)
+      --turn-user <name>    Username for the TURN relay
+      --turn-pass <secret>  Password for the TURN relay
       --hostname <domain>   Your own domain, e.g. movies.example.com
       --tunnel-name <name>  Run this named Cloudflare tunnel instead of a
                             throwaway one (pairs with --hostname)
@@ -55,6 +59,9 @@ function parseArgs(argv) {
     controlMode: 'everyone',
     libraryMode: 'host',
     roomName: null,
+    turnUrls: [],
+    turnUser: null,
+    turnPass: null,
     tunnel: true,
     autoPauseOnBuffer: false,
     allowTranscode: true,
@@ -79,6 +86,9 @@ function parseArgs(argv) {
       case '--host-only': options.controlMode = 'host'; break;
       case '--shared-library': options.libraryMode = 'shared'; break;
       case '--room-name': options.roomName = argv[++i]; break;
+      case '--turn': options.turnUrls.push(argv[++i]); break;
+      case '--turn-user': options.turnUser = argv[++i]; break;
+      case '--turn-pass': options.turnPass = argv[++i]; break;
       case '--no-tunnel': options.tunnel = false; break;
       case '--auto-pause': options.autoPauseOnBuffer = true; break;
       case '--no-auto-pause': options.autoPauseOnBuffer = false; break;
@@ -220,6 +230,15 @@ const server = await createServer({
   controlMode: options.controlMode,
   libraryMode: options.libraryMode,
   ...(options.roomName ? { roomName: options.roomName } : {}),
+  iceServers: options.turnUrls.length
+    ? [
+        {
+          urls: options.turnUrls,
+          ...(options.turnUser ? { username: options.turnUser } : {}),
+          ...(options.turnPass ? { credential: options.turnPass } : {}),
+        },
+      ]
+    : [],
   autoPauseOnBuffer: options.autoPauseOnBuffer,
   allowTranscode: options.allowTranscode,
   preferSoftwareEncoder: options.preferSoftwareEncoder,
@@ -340,6 +359,10 @@ if (!tunnel && !hostname) {
     console.log('On the same Wi-Fi she can also use:');
     for (const address of lan) console.log(`  ${address}`);
   }
+}
+
+if (options.turnUrls.length) {
+  console.log(`\nScreen sharing will relay through ${options.turnUrls.join(', ')} if it has to.`);
 }
 
 console.log(`\nControl: ${options.controlMode === 'host' ? 'only you' : 'either of you'} can play, pause and seek.`);

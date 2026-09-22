@@ -5,19 +5,33 @@
 // continuously and drops quality to fit it, where an HTTP stream picks a
 // bitrate and stalls when the link cannot keep up.
 
-const RTC_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-  ],
-  bundlePolicy: 'max-bundle',
-};
+// STUN tells each side what its public address is, which is enough when both
+// routers will accept an incoming connection. When one will not — some mobile
+// carriers, some office networks — nothing connects without a TURN relay to
+// pass the media through, which is what `extraIceServers` is for.
+const DEFAULT_ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+];
 
 // Film, not a spreadsheet: keep every pixel and spend the bitrate on motion.
+// displaySurface 'monitor' narrows the picker to whole screens — the only
+// choice Chrome will carry audio with. Offering a window or a tab just leads
+// people to a silent film.
 const VIDEO_CONSTRAINTS = {
+  displaySurface: 'monitor',
   frameRate: { ideal: 30, max: 60 },
   width: { ideal: 1920 },
   height: { ideal: 1080 },
+};
+
+// Chrome-specific, and the reason the audio tick arrives already ticked.
+const PICKER_OPTIONS = {
+  systemAudio: 'include',
+  // Never offer this very tab: sharing it shows the share, inside the share.
+  selfBrowserSurface: 'exclude',
+  // No "share something else instead" button mid-film.
+  surfaceSwitching: 'exclude',
 };
 
 // Screen capture audio is music and dialogue, so switch off everything meant
@@ -57,7 +71,11 @@ export function upgradeAudio(sdp) {
 }
 
 export class ScreenShare {
-  constructor({ send, onStream, onStateChange, onEnded }) {
+  constructor({ send, onStream, onStateChange, onEnded, iceServers = [] }) {
+    this.config = {
+      iceServers: [...DEFAULT_ICE_SERVERS, ...iceServers],
+      bundlePolicy: 'max-bundle',
+    };
     this.send = send;
     this.onStream = onStream;
     this.onStateChange = onStateChange ?? (() => {});
@@ -76,18 +94,30 @@ export class ScreenShare {
     // device, a machine with the capture blocked. Losing the sound is a poor
     // evening; losing the picture as well is no evening at all, so fall back
     // to video rather than let the whole thing fail.
-    let withoutAudio = false;
-    try {
-      this.stream = await navigator.mediaDevices.getDisplayMedia({
-        video: VIDEO_CONSTRAINTS,
-        audio: AUDIO_CONSTRAINTS,
-      });
-    } catch (error) {
-      // A refusal is the person saying no; anything else is worth retrying.
-      if (error.name === 'NotAllowedError' && !/audio/i.test(error.message ?? '')) throw error;
-      this.stream = await navigator.mediaDevices.getDisplayMedia({ video: VIDEO_CONSTRAINTS });
-      withoutAudio = true;
+    // Best first, then give up one thing at a time. Losing the sound is a poor
+    // evening; losing the picture as well is no evening at all.
+    const attempts = [
+      { video: VIDEO_CONSTRAINTS, audio: AUDIO_CONSTRAINTS, ...PICKER_OPTIONS },
+      { video: VIDEO_CONSTRAINTS, audio: true, ...PICKER_OPTIONS },
+      { video: { displaySurface: 'monitor' }, audio: true },
+      { video: true, audio: true },
+      { video: true },
+    ];
+
+    let lastError;
+    for (const constraints of attempts) {
+      try {
+        this.stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+        break;
+      } catch (error) {
+        lastError = error;
+        // Somebody closing the picker means no, and asking again is rude.
+        if (error.name === 'NotAllowedError' && !/audio|surface/i.test(error.message ?? '')) throw error;
+      }
     }
+    if (!this.stream) throw lastError;
+
+    const withoutAudio = this.stream.getAudioTracks().length === 0;
 
     const [video] = this.stream.getVideoTracks();
     if (video) {
@@ -122,8 +152,28 @@ export class ScreenShare {
     this.peers.delete(id);
   }
 
+  setIceServers(extra = []) {
+    this.config.iceServers = [...DEFAULT_ICE_SERVERS, ...extra];
+  }
+
+  // Whether the media is flowing directly or through a relay. Useful when a
+  // connection works at home and not from abroad.
+  async connectionKind(id) {
+    const peer = this.peers.get(id);
+    if (!peer) return null;
+    const stats = await peer.getStats();
+    for (const report of stats.values()) {
+      if (report.type !== 'candidate-pair' || report.state !== 'succeeded') continue;
+      const local = stats.get(report.localCandidateId);
+      const remote = stats.get(report.remoteCandidateId);
+      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return 'relayed';
+      return 'direct';
+    }
+    return null;
+  }
+
   _peer(id) {
-    const peer = new RTCPeerConnection(RTC_CONFIG);
+    const peer = new RTCPeerConnection(this.config);
     this.peers.set(id, peer);
 
     peer.addEventListener('icecandidate', (event) => {
