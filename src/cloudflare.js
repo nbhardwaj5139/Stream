@@ -108,58 +108,92 @@ export function isPrivateAddress(address) {
   );
 }
 
+// Resolving through one resolver cannot tell "the record does not exist" from
+// "this machine cannot see it" — and on a work laptop behind a corporate DNS
+// server, or after a failed lookup has been negatively cached, those look
+// identical. So ask the system resolver and a public one, and compare.
+const PUBLIC_RESOLVERS = ['1.1.1.1', '8.8.8.8'];
+
+async function resolveBoth(resolver, hostname) {
+  const answer = { cname: null, addresses: [], error: null };
+  try {
+    answer.cname = (await resolver.resolveCname(hostname))[0] ?? null;
+  } catch {
+    /* proxied records answer with addresses rather than a visible CNAME */
+  }
+  try {
+    answer.addresses = await resolver.resolve4(hostname);
+  } catch (error) {
+    answer.error = error.code ?? 'FAILED';
+  }
+  return answer;
+}
+
+function classify(addresses) {
+  if (addresses.some(isPrivateAddress)) return 'private-address';
+  if (!addresses.some(isCloudflareAddress)) return 'not-cloudflare';
+  return 'ok';
+}
+
 // Works out what a hostname currently points at, and what that implies.
 export async function inspectHostname(hostname) {
-  const result = { hostname, cname: null, addresses: [], verdict: null, detail: null };
+  const publicResolver = new dns.Resolver({ timeout: 5000, tries: 2 });
+  publicResolver.setServers(PUBLIC_RESOLVERS);
 
-  try {
-    result.cname = (await dns.resolveCname(hostname))[0] ?? null;
-  } catch {
-    /* a proxied record answers with addresses, not a visible CNAME */
-  }
+  const [system, world] = await Promise.all([
+    resolveBoth(dns, hostname),
+    resolveBoth(publicResolver, hostname),
+  ]);
 
-  try {
-    result.addresses = await dns.resolve4(hostname);
-  } catch (error) {
-    result.verdict = 'no-dns';
-    result.detail =
-      error.code === 'ENOTFOUND' || error.code === 'ENODATA'
-        ? 'The name does not resolve at all — the DNS record was never created.'
-        : `DNS lookup failed (${error.code}).`;
-    return result;
-  }
+  const best = system.addresses.length ? system : world;
+  const result = {
+    hostname,
+    system,
+    public: world,
+    cname: best.cname,
+    addresses: best.addresses,
+    verdict: null,
+    detail: null,
+  };
 
-  if (result.addresses.length === 0) {
-    result.verdict = 'no-dns';
-    result.detail = 'The name resolves to nothing.';
-    return result;
-  }
-
-  if (result.addresses.some(isPrivateAddress)) {
-    result.verdict = 'private-address';
-    result.detail =
-      'It points at a private address, so it only works on that network. ' +
-      'An old A record is probably shadowing the tunnel.';
-    return result;
-  }
-
-  if (!result.addresses.some(isCloudflareAddress)) {
-    result.verdict = 'not-cloudflare';
-    result.detail =
-      'It resolves somewhere that is not Cloudflare, so the tunnel is not in the path. ' +
-      'Check for an existing A or CNAME record on that name.';
-    return result;
-  }
-
-  if (result.cname && !result.cname.endsWith('.cfargotunnel.com')) {
-    result.verdict = 'wrong-target';
-    result.detail = `It is a CNAME to ${result.cname}, not to a tunnel.`;
-    return result;
-  }
-
-  result.verdict = 'ok';
-  result.detail = 'DNS points at Cloudflare, which is correct.';
+  Object.assign(result, judge({ system, public: world, cname: result.cname }));
   return result;
+}
+
+const DETAIL = {
+  'no-dns': 'The name does not resolve anywhere — the DNS record was never created.',
+  'local-dns':
+    'Public DNS can see it but this machine cannot. Either a failed lookup is ' +
+    'still cached here, or this network\u2019s DNS server will not resolve it.',
+  'private-address':
+    'It points at a private address, so it only works on that network. ' +
+    'An old A record is probably shadowing the tunnel.',
+  'not-cloudflare':
+    'It resolves somewhere that is not Cloudflare, so the tunnel is not in the path. ' +
+    'Check for an existing A or CNAME record on that name.',
+  ok: 'DNS points at Cloudflare, which is correct.',
+};
+
+// Pure decision, given what each resolver answered.
+export function judge({ system, public: world, cname = null }) {
+  const systemSees = system.addresses.length > 0;
+  const worldSees = world.addresses.length > 0;
+
+  if (!systemSees && !worldSees) return { verdict: 'no-dns', detail: DETAIL['no-dns'] };
+  if (!systemSees) return { verdict: 'local-dns', detail: DETAIL['local-dns'] };
+
+  const addresses = system.addresses;
+  const verdict = classify(addresses);
+  if (verdict !== 'ok') return { verdict, detail: DETAIL[verdict] };
+
+  if (cname && !cname.endsWith('.cfargotunnel.com')) {
+    return { verdict: 'wrong-target', detail: `It is a CNAME to ${cname}, not to a tunnel.` };
+  }
+
+  return {
+    verdict: 'ok',
+    detail: worldSees ? DETAIL.ok : 'This machine resolves it correctly.',
+  };
 }
 
 export async function tunnelInfo(name) {

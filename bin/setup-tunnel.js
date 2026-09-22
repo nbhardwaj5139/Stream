@@ -113,11 +113,14 @@ if (checkOnly) {
     console.log(`  server    NOT running on port ${port}`);
   }
 
-  // 2. Where does the name point?
+  // 2. Where does the name point, here and in the wider world?
   const dnsResult = await inspectHostname(hostname);
-  if (dnsResult.addresses.length) {
-    console.log(`  dns       ${hostname} -> ${dnsResult.addresses.join(', ')}`);
-  }
+  const show = (label, answer) =>
+    console.log(
+      `  ${label.padEnd(9)} ${answer.addresses.length ? answer.addresses.join(', ') : `no answer (${answer.error})`}`
+    );
+  show('dns here', dnsResult.system);
+  show('dns 1.1.1.1', dnsResult.public);
   if (dnsResult.cname) console.log(`  cname     ${dnsResult.cname}`);
   console.log(`            ${dnsResult.detail}`);
 
@@ -138,6 +141,17 @@ if (checkOnly) {
   console.log('\nWhat this means:\n');
   if (dnsResult.verdict === 'no-dns') {
     console.log('  The DNS record is missing. Run the setup again without --check.');
+  } else if (dnsResult.verdict === 'local-dns') {
+    console.log('  The record exists — this machine just cannot see it yet.');
+    console.log('  Clear the cached failure and try again:');
+    console.log('');
+    console.log('    ipconfig /flushdns');
+    console.log('');
+    console.log('  Chrome keeps its own cache too: open chrome://net-internals/#dns');
+    console.log('  and press "Clear host cache", then reload.');
+    console.log('');
+    console.log('  If it still will not resolve, this network\u2019s DNS server is refusing');
+    console.log('  the name. Try it on a phone over mobile data to confirm.');
   } else if (dnsResult.verdict === 'private-address' || dnsResult.verdict === 'not-cloudflare') {
     console.log(`  ${dnsResult.detail}`);
     console.log('  Open the Cloudflare dashboard -> DNS, delete any A or CNAME record on');

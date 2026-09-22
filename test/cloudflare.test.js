@@ -12,6 +12,7 @@ import {
   isPrivateAddress,
   isValidHostname,
   isValidTunnelName,
+  judge,
 } from '../src/cloudflare.js';
 
 test('hostnames are checked before they reach cloudflared', () => {
@@ -105,4 +106,41 @@ test('private and carrier-grade addresses are recognised as unreachable', () => 
   assert.equal(isPrivateAddress('172.32.0.1'), false);
   assert.equal(isPrivateAddress('104.21.14.2'), false);
   assert.equal(isPrivateAddress('100.128.0.1'), false);
+});
+
+test('the DNS verdict separates "no record" from "this machine cannot see it"', () => {
+  const none = { addresses: [], error: 'ENOTFOUND' };
+  const cloudflare = { addresses: ['104.21.14.2'], error: null };
+
+  // Nobody can resolve it: the record was never made.
+  assert.equal(judge({ system: none, public: none }).verdict, 'no-dns');
+
+  // The world can, this machine cannot — a cached failure or a corporate
+  // resolver, not a setup problem. Telling these apart is the whole point.
+  const local = judge({ system: none, public: cloudflare });
+  assert.equal(local.verdict, 'local-dns');
+  assert.match(local.detail, /cached here|DNS server/);
+
+  // Both agree and it is Cloudflare: correct.
+  assert.equal(judge({ system: cloudflare, public: cloudflare }).verdict, 'ok');
+});
+
+test('the DNS verdict catches records that bypass the tunnel', () => {
+  const lan = { addresses: ['192.168.120.179'], error: null };
+  const elsewhere = { addresses: ['203.0.113.10'], error: null };
+  const cloudflare = { addresses: ['172.67.140.11'], error: null };
+
+  assert.equal(judge({ system: lan, public: lan }).verdict, 'private-address');
+  assert.equal(judge({ system: elsewhere, public: elsewhere }).verdict, 'not-cloudflare');
+
+  // Right addresses, but pointed at something that is not a tunnel.
+  const wrong = judge({ system: cloudflare, public: cloudflare, cname: 'example.pages.dev' });
+  assert.equal(wrong.verdict, 'wrong-target');
+
+  const right = judge({
+    system: cloudflare,
+    public: cloudflare,
+    cname: 'a86cf6b7-04a7-48e1-aaaa-bbbbbbbbbbbb.cfargotunnel.com',
+  });
+  assert.equal(right.verdict, 'ok');
 });
