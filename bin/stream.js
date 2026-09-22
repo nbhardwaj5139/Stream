@@ -2,10 +2,12 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createServer } from '../src/server.js';
 import { generatePasscode, generateToken } from '../src/auth.js';
 import { hasCloudflared, startTunnel, startNamedTunnel } from '../src/tunnel.js';
 import { describeProblem, resolveRoots } from '../src/roots.js';
+import { readIngressHostnames } from '../src/cloudflare.js';
 
 const CONFIG_PATH = path.join(os.homedir(), '.stream-room.json');
 
@@ -219,6 +221,12 @@ await new Promise((resolve, reject) => {
   server.listen(options.port, '0.0.0.0', resolve);
 });
 
+const appDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+if (roots.some((root) => root === appDirectory)) {
+  console.log(`\n  Note: ${appDirectory} is the app's own folder, not a movie folder.`);
+  console.log('  Pass just the folder with your films in it.');
+}
+
 const count = server.library.items.size;
 console.log(`Found ${count} video file${count === 1 ? '' : 's'} in:`);
 for (const root of roots) console.log(`  ${root}`);
@@ -239,7 +247,22 @@ if (!server.capabilities.ffmpeg) {
 }
 
 // Strip any scheme the user typed so we always build exactly one https:// URL.
-const hostname = options.hostname?.replace(/^https?:\/\//, '').replace(/\/+$/, '') ?? null;
+let hostname = options.hostname?.replace(/^https?:\/\//, '').replace(/\/+$/, '') ?? null;
+
+// cloudflared serves whatever its config says, not what was typed here. If the
+// two disagree the printed link would not work, which is worse than useless
+// when the whole point is to send it to somebody.
+if (options.tunnelName) {
+  const configured = readIngressHostnames();
+  if (configured.length && hostname && !configured.includes(hostname)) {
+    console.log(`\n  The tunnel serves ${configured.join(', ')}, not ${hostname}.`);
+    console.log(`  Using ${configured[0]} for the link below.`);
+    console.log('  (A mistyped --hostname usually means the command was pasted twice.)');
+    hostname = configured[0];
+  } else if (configured.length && !hostname) {
+    hostname = configured[0];
+  }
+}
 
 let tunnel = null;
 if (options.tunnel) {

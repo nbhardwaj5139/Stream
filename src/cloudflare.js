@@ -207,3 +207,17 @@ export async function tunnelInfo(name) {
     return null;
   }
 }
+
+// The hostnames cloudflared is actually configured to serve. We wrote this
+// file ourselves, so a full YAML parser is not worth pulling in.
+export function parseIngressHostnames(yaml) {
+  return [...yaml.matchAll(/^\s*-\s*hostname:\s*["']?([^"'\s#]+)/gm)].map((match) => match[1]);
+}
+
+export function readIngressHostnames(file = configPath()) {
+  try {
+    return parseIngressHostnames(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return [];
+  }
+}

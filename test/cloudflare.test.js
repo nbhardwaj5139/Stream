@@ -13,6 +13,7 @@ import {
   isValidHostname,
   isValidTunnelName,
   judge,
+  parseIngressHostnames,
 } from '../src/cloudflare.js';
 
 test('hostnames are checked before they reach cloudflared', () => {
@@ -143,4 +144,34 @@ test('the DNS verdict catches records that bypass the tunnel', () => {
     cname: 'a86cf6b7-04a7-48e1-aaaa-bbbbbbbbbbbb.cfargotunnel.com',
   });
   assert.equal(right.verdict, 'ok');
+});
+
+test('the hostnames cloudflared is configured to serve are read back', () => {
+  const yaml = buildConfigYaml({
+    tunnelName: 'movies',
+    tunnelId: '11111111-2222-3333-4444-555555555555',
+    hostname: 'movies.nbhardwaj.ca',
+    port: 8420,
+  });
+
+  // The config is the truth about what the tunnel answers for; a --hostname
+  // that disagrees would print a link that cannot work.
+  assert.deepEqual(parseIngressHostnames(yaml), ['movies.nbhardwaj.ca']);
+  assert.ok(!parseIngressHostnames(yaml).includes('movies.nbhardwaj.cacd'));
+});
+
+test('ingress parsing copes with quotes, comments and several hostnames', () => {
+  const yaml = [
+    'tunnel: movies',
+    'ingress:',
+    '  - hostname: "one.example.com"   # first',
+    '    service: http://localhost:8420',
+    "  - hostname: two.example.com",
+    '    service: http://localhost:9000',
+    '  - service: http_status:404',
+  ].join('\n');
+
+  assert.deepEqual(parseIngressHostnames(yaml), ['one.example.com', 'two.example.com']);
+  assert.deepEqual(parseIngressHostnames('tunnel: x\ningress:\n  - service: http_status:404\n'), []);
+  assert.deepEqual(parseIngressHostnames(''), []);
 });
