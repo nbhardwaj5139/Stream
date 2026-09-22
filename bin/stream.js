@@ -312,11 +312,24 @@ let shuttingDown = false;
 const base = hostname
   ? `https://${hostname}`
   : tunnel?.url ?? `http://localhost:${options.port}`;
+const localBase = `http://localhost:${options.port}`;
+const remote = base !== localBase;
+
 console.log('\n' + '─'.repeat(62));
 console.log('  Send her this link and this passcode:');
 console.log(`\n    ${base}`);
 console.log(`    passcode:  ${guestPasscode}`);
-console.log(`\n  Your own passcode (same link):  ${hostPasscode}`);
+if (remote) {
+  // Watching your own film through the tunnel sends it out to Cloudflare and
+  // back again, so your upload carries it twice and you both stutter.
+  console.log('\n  On THIS laptop, open the local address instead:');
+  console.log(`\n    ${localBase}`);
+  console.log(`    passcode:  ${hostPasscode}`);
+  console.log('\n  That plays straight off the disk and leaves the whole');
+  console.log('  connection free for her.');
+} else {
+  console.log(`\n  Your own passcode (same link):  ${hostPasscode}`);
+}
 console.log('─'.repeat(62));
 
 if (!tunnel && !hostname) {

@@ -134,6 +134,12 @@ node bin/stream.js "D:\Movies" --hostname movies.example.com --no-tunnel
 Either way your laptop still has to be awake and running the server — Cloudflare
 is a front door, not a host.
 
+**Watch on the host machine using `http://localhost:8420`, not your domain.**
+Going through the tunnel sends the film out to Cloudflare and straight back,
+so your upload carries it twice and both of you stutter. The local address
+plays it off the disk and leaves the whole connection for her. The startup
+banner prints both.
+
 ### What a domain does and doesn't protect
 
 It genuinely gives you:
@@ -257,7 +263,12 @@ Keyboard: <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> jump 10s 
   the same, but the domain changes. Use your own domain with a named tunnel
   (see above) for an address that never changes.
 - **Upload speed is the real ceiling.** 1080p is roughly 8 Mbps, 720p about 4.
-  If she keeps buffering, drop a step — that's what the selector is for.
+  If she keeps buffering, drop a step — that's what the selector is for. And
+  watch locally yourself, or your upload is carrying the film twice.
+- **Two browsers needing different formats means two encodes.** Chrome takes
+  fragmented MP4 and Safari takes HLS, so a laptop and an iPhone watching the
+  same converted film run ffmpeg twice. A GPU encoder shrugs at that; software
+  x264 will not.
 - **This does not share your screen.** It plays files from the folders you
   chose. Anything that isn't a file on your disk is out of scope.
 
