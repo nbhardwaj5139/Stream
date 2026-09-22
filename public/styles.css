@@ -653,7 +653,7 @@ body.centered {
 
 /* --------------------------------------------------------------- compact -- */
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   :root { --panel-width: 100%; }
   .app[data-panel="open"] { grid-template-columns: 1fr; }
   .app[data-panel="open"] .stage { display: none; }
@@ -760,7 +760,7 @@ body.centered {
 
 /* On a phone every control gets a full-width-ish tap target rather than being
    squeezed onto one line. */
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .bar-right {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
