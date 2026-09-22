@@ -18,10 +18,12 @@ import {
   configPath,
   credentialsPath,
   findTunnel,
+  inspectHostname,
   isLoggedIn,
   isValidHostname,
   isValidTunnelName,
   listTunnels,
+  tunnelInfo,
 } from '../src/cloudflare.js';
 
 const execFileAsync = promisify(execFile);
@@ -29,9 +31,11 @@ const execFileAsync = promisify(execFile);
 const USAGE = `
 Usage
   node bin/setup-tunnel.js <hostname> [--name <tunnel>] [--port <number>]
+  node bin/setup-tunnel.js --check <hostname> [--name <tunnel>] [--port <number>]
 
-Example
+Examples
   node bin/setup-tunnel.js movies.example.com
+  node bin/setup-tunnel.js --check movies.example.com
 `.trim();
 
 function fail(message) {
@@ -59,10 +63,12 @@ if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
 let hostname = null;
 let tunnelName = null;
 let port = 8420;
+let checkOnly = false;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--name') tunnelName = args[++i];
   else if (args[i] === '--port') port = Number(args[++i]);
+  else if (args[i] === '--check') checkOnly = true;
   else if (!args[i].startsWith('-')) hostname = args[i];
 }
 
@@ -74,15 +80,82 @@ if (!isValidHostname(hostname)) fail(`Not a usable hostname: ${hostname}\n\n${US
 if (!isValidTunnelName(tunnelName)) fail(`Not a usable tunnel name: ${tunnelName}`);
 if (!Number.isInteger(port) || port < 1 || port > 65535) fail(`Not a usable port: ${port}`);
 
+let hasCloudflared = true;
 try {
   await execFileAsync('cloudflared', ['--version'], { timeout: 10_000 });
 } catch {
-  fail(
-    'cloudflared is not installed.\n' +
-      '  Windows:  winget install Cloudflare.cloudflared\n' +
-      '  macOS:    brew install cloudflared\n' +
-      '  Linux:    https://github.com/cloudflare/cloudflared/releases'
-  );
+  hasCloudflared = false;
+  // Diagnosing is still worth doing without it; setting up is not.
+  if (!checkOnly) {
+    fail(
+      'cloudflared is not installed.\n' +
+        '  Windows:  winget install Cloudflare.cloudflared\n' +
+        '  macOS:    brew install cloudflared\n' +
+        '  Linux:    https://github.com/cloudflare/cloudflared/releases'
+    );
+  }
+}
+
+// ------------------------------------------------------------------ check --
+
+if (checkOnly) {
+  console.log(`Checking ${hostname}\n`);
+
+  // 1. Is the room even running here?
+  let local = null;
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/healthz`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    local = await response.json();
+    console.log(`  server    running on port ${port}, ${local.files} file(s) shared`);
+  } catch {
+    console.log(`  server    NOT running on port ${port}`);
+  }
+
+  // 2. Where does the name point?
+  const dnsResult = await inspectHostname(hostname);
+  if (dnsResult.addresses.length) {
+    console.log(`  dns       ${hostname} -> ${dnsResult.addresses.join(', ')}`);
+  }
+  if (dnsResult.cname) console.log(`  cname     ${dnsResult.cname}`);
+  console.log(`            ${dnsResult.detail}`);
+
+  // 3. Is the tunnel connected to Cloudflare's edge?
+  const info = hasCloudflared ? await tunnelInfo(tunnelName) : null;
+  if (!hasCloudflared) console.log('  tunnel    cloudflared is not installed on this machine');
+  const connections = info?.conns?.length ?? 0;
+  if (!hasCloudflared) {
+    /* already reported above */
+  } else if (!info) {
+    console.log(`  tunnel    "${tunnelName}" not found, or cloudflared could not read it`);
+  } else if (connections === 0) {
+    console.log(`  tunnel    "${tunnelName}" exists but has NO live connections`);
+  } else {
+    console.log(`  tunnel    "${tunnelName}" connected (${connections} edge connection(s))`);
+  }
+
+  console.log('\nWhat this means:\n');
+  if (dnsResult.verdict === 'no-dns') {
+    console.log('  The DNS record is missing. Run the setup again without --check.');
+  } else if (dnsResult.verdict === 'private-address' || dnsResult.verdict === 'not-cloudflare') {
+    console.log(`  ${dnsResult.detail}`);
+    console.log('  Open the Cloudflare dashboard -> DNS, delete any A or CNAME record on');
+    console.log(`  "${hostname.split('.')[0]}", then run the setup again.`);
+  } else if (!local) {
+    console.log(`  DNS is fine, but nothing is serving on port ${port}.`);
+    console.log('  Start the room first, in another window.');
+  } else if (connections === 0) {
+    console.log('  DNS is fine and the room is running, but no tunnel is connected.');
+    console.log(`  Start it with:  node bin/stream.js "<folder>" --tunnel-name ${tunnelName} --hostname ${hostname}`);
+  } else {
+    console.log('  Everything on this machine looks right.');
+    console.log('  If the browser still times out, something between you and Cloudflare is');
+    console.log('  blocking it — a corporate network or DNS filter is the usual cause.');
+    console.log('  Try the same address from a phone on mobile data to confirm.');
+  }
+  console.log('');
+  process.exit(0);
 }
 
 console.log(`Setting up ${hostname} -> http://localhost:${port}\n`);
@@ -125,11 +198,24 @@ if (!fs.existsSync(credentials)) {
 
 // 3. Point the DNS record at the tunnel.
 console.log(`3/4  Routing ${hostname} to the tunnel.`);
+let routed = true;
 try {
   await run('cloudflared', ['tunnel', 'route', 'dns', tunnelName, hostname]);
 } catch {
-  // Re-running is the usual reason this fails, and it is harmless.
-  console.log(`     (already routed, or a record for ${hostname} exists — continuing)`);
+  // Re-running is the usual reason, and harmless — but so is an existing
+  // record pointing somewhere else, which is not. Check rather than assume.
+  routed = false;
+}
+if (!routed) {
+  const check = await inspectHostname(hostname);
+  if (check.verdict === 'ok') {
+    console.log('     (already routed — continuing)');
+  } else {
+    console.log(`     Could not route ${hostname}.`);
+    console.log(`     ${check.detail}`);
+    console.log('     Delete any existing A/CNAME record for that name in the Cloudflare');
+    console.log('     dashboard (DNS tab), then run this again.');
+  }
 }
 
 // 4. Write the config cloudflared reads on startup.

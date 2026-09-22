@@ -8,6 +8,8 @@ import {
   backupExistingConfig,
   buildConfigYaml,
   findTunnel,
+  isCloudflareAddress,
+  isPrivateAddress,
   isValidHostname,
   isValidTunnelName,
 } from '../src/cloudflare.js';
@@ -74,4 +76,33 @@ test('an existing config is backed up before being overwritten', async () => {
   assert.equal(fs.readFileSync(backup, 'utf8'), 'tunnel: something-i-already-had\n');
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Cloudflare proxy addresses are told apart from everything else', () => {
+  // A proxied record lands in one of these; anything else means the tunnel is
+  // not in the path, which is the usual reason a hostname just times out.
+  assert.equal(isCloudflareAddress('104.21.14.2'), true);
+  assert.equal(isCloudflareAddress('172.67.140.11'), true);
+  assert.equal(isCloudflareAddress('162.159.0.1'), true);
+
+  assert.equal(isCloudflareAddress('8.8.8.8'), false);
+  assert.equal(isCloudflareAddress('203.0.113.4'), false);
+  // Adjacent but outside the ranges.
+  assert.equal(isCloudflareAddress('104.15.1.1'), false);
+  assert.equal(isCloudflareAddress('172.72.1.1'), false);
+});
+
+test('private and carrier-grade addresses are recognised as unreachable', () => {
+  assert.equal(isPrivateAddress('192.168.120.179'), true);
+  assert.equal(isPrivateAddress('10.1.2.3'), true);
+  assert.equal(isPrivateAddress('172.16.0.1'), true);
+  assert.equal(isPrivateAddress('172.31.255.255'), true);
+  assert.equal(isPrivateAddress('127.0.0.1'), true);
+  // The VPN range a work laptop shows up on.
+  assert.equal(isPrivateAddress('100.64.100.6'), true);
+
+  assert.equal(isPrivateAddress('172.15.0.1'), false);
+  assert.equal(isPrivateAddress('172.32.0.1'), false);
+  assert.equal(isPrivateAddress('104.21.14.2'), false);
+  assert.equal(isPrivateAddress('100.128.0.1'), false);
 });
