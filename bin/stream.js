@@ -300,6 +300,8 @@ if (options.tunnel) {
 }
 
 // A hostname you own wins: it is the address that will still work next month.
+let shuttingDown = false;
+
 const base = hostname
   ? `https://${hostname}`
   : tunnel?.url ?? `http://localhost:${options.port}`;
@@ -331,9 +333,17 @@ if (hostname && !options.tunnelName && options.tunnel) {
       '(as a service, say), add --no-tunnel so two tunnels do not fight.'
   );
 }
-console.log('Press Ctrl+C to stop.\n');
+console.log('Press Ctrl+C to stop. Closing this window takes the link down.\n');
 
-let shuttingDown = false;
+// cloudflared exiting is invisible from here otherwise: the room keeps serving
+// on localhost while the public address returns Cloudflare error 1033.
+tunnel?.process?.on('close', (code) => {
+  if (shuttingDown) return;
+  console.log(`\n  The tunnel disconnected (cloudflared exited ${code}).`);
+  console.log(`  ${base} will show Cloudflare error 1033 until it is running again.`);
+  console.log('  Press Ctrl+C and start it again.\n');
+});
+
 function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
