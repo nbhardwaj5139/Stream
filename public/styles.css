@@ -801,3 +801,50 @@ body.centered {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* ------------------------------------------------------------------ sound -- */
+
+/* Whether there is sound is the thing people miss most, so it gets a control
+   that states its case rather than a line of status text. */
+.sound .icon-sound-off { display: none; }
+.sound[data-muted="true"] .icon-sound-on { display: none; }
+.sound[data-muted="true"] .icon-sound-off { display: inline; }
+
+.sound[data-muted="true"] {
+  background: rgba(232, 176, 94, .14);
+  border-color: rgba(232, 176, 94, .45);
+  color: var(--warn);
+  font-weight: 600;
+}
+.sound[data-muted="true"]:hover {
+  background: rgba(232, 176, 94, .22);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.sound[data-muted="true"] svg { stroke-width: 2.2; }
+
+/* Only while something is actually playing silently — a nudge, not decoration. */
+.sound[data-muted="true"][data-playing="true"] {
+  animation: sound-nudge 2.2s ease-in-out infinite;
+}
+@keyframes sound-nudge {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 176, 94, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(232, 176, 94, .16); }
+}
+
+.overlay .tap-for-sound {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 24px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: #1a1206;
+  font-weight: 600;
+  font-size: 15px;
+}
+.overlay .tap-for-sound svg {
+  width: 20px; height: 20px;
+  fill: none; stroke: currentColor; stroke-width: 2.2;
+  stroke-linecap: round; stroke-linejoin: round;
+}

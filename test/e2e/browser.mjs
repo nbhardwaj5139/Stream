@@ -267,6 +267,30 @@ try {
   const buttonLabel = await host.textContent('#btn-library');
   check('the library button says what it does now', /Change film/.test(buttonLabel), buttonLabel.trim());
 
+  // --- the sound control ---------------------------------------------------
+  check('a sound control appears once something is playing', await guest.isVisible('#btn-sound'));
+
+  const muteState = async (page) =>
+    page.evaluate(() => {
+      const button = document.getElementById('btn-sound');
+      const video = document.getElementById('video');
+      return {
+        muted: button.dataset.muted,
+        label: document.getElementById('sound-label').textContent,
+        videoMuted: video.muted,
+      };
+    });
+
+  await guest.evaluate(() => { document.getElementById('video').muted = true; });
+  const silent = await muteState(guest);
+  check('it says so when the film is muted', silent.muted === 'true' && /tap for sound/i.test(silent.label), JSON.stringify(silent));
+
+  await guest.click('#btn-sound');
+  const audible = await muteState(guest);
+  check('and turns the sound on when pressed', audible.muted === 'false' && !audible.videoMuted, JSON.stringify(audible));
+  check('then says the sound is on', /sound on/i.test(audible.label), audible.label);
+
+
   // --- screen sharing ------------------------------------------------------
   check('only the host is offered screen sharing', await host.isVisible('#btn-share'));
   check('the guest is not', !(await guest.isVisible('#btn-share')));

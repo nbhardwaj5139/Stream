@@ -23,6 +23,8 @@ const dom = {
   syncBadge: el('sync-badge'),
   qualityWrap: el('quality-wrap'),
   quality: el('quality'),
+  btnSound: el('btn-sound'),
+  soundLabel: el('sound-label'),
   btnResync: el('btn-resync'),
   btnStop: el('btn-stop'),
   screen: document.querySelector('.screen'),
@@ -126,8 +128,19 @@ function flash(text, ms = 2200) {
   nudgeTimer = setTimeout(() => { dom.nudge.hidden = true; }, ms);
 }
 
-const showOverlay = (text) => {
-  dom.overlayText.textContent = text;
+const showOverlay = (text, { sound = false } = {}) => {
+  dom.overlayText.replaceChildren();
+  if (sound) {
+    const pill = document.createElement('span');
+    pill.className = 'tap-for-sound';
+    pill.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>';
+    pill.append(document.createTextNode(text));
+    dom.overlayText.append(pill);
+  } else {
+    dom.overlayText.textContent = text;
+  }
   dom.overlay.hidden = false;
 };
 const hideOverlay = () => { dom.overlay.hidden = true; };
@@ -440,7 +453,7 @@ async function playVideo() {
     dom.video.muted = true;
     await dom.video.play();
     state.needsGesture = true;
-    showOverlay('Tap anywhere for sound');
+    showOverlay('Tap anywhere for sound', { sound: true });
   } catch {
     state.needsGesture = true;
     showOverlay('Tap anywhere to start watching');
@@ -479,6 +492,7 @@ function applyState(room, { initial = false } = {}) {
     renderMedia();
     renderPermissions();
     renderQuality();
+    renderSound();
     updateSyncBadge();
     return;
   }
@@ -705,6 +719,35 @@ function renderPermissions() {
   if (!allowed) closeLibrary();
 }
 
+// Muted playback is the easiest thing in the room to miss, so the control says
+// which state it is in rather than only offering to change it.
+function renderSound() {
+  const playable = Boolean(state.media) || isScreenMode();
+  dom.btnSound.hidden = !playable || screenShare.sharing;
+
+  const muted = dom.video.muted || dom.video.volume === 0;
+  dom.btnSound.dataset.muted = String(muted);
+  dom.btnSound.dataset.playing = String(!dom.video.paused);
+  dom.soundLabel.textContent = muted ? 'Tap for sound' : 'Sound on';
+  dom.btnSound.title = muted ? 'The film is muted — turn the sound on' : 'Mute';
+}
+
+dom.btnSound.addEventListener('click', (event) => {
+  // Not the page-wide "tap anywhere" handler; this one is deliberate.
+  event.stopPropagation();
+  dom.video.muted = !dom.video.muted;
+  if (!dom.video.muted && dom.video.volume === 0) dom.video.volume = 1;
+  state.needsGesture = false;
+  hideOverlay();
+  if (dom.video.paused) playVideo();
+  renderSound();
+  updateSyncBadge();
+});
+
+for (const event of ['volumechange', 'play', 'pause', 'loadedmetadata']) {
+  dom.video.addEventListener(event, renderSound);
+}
+
 function renderQuality() {
   // Quality is ffmpeg's business; a shared screen negotiates its own.
   dom.qualityWrap.hidden = !state.media || isScreenMode();
@@ -736,6 +779,7 @@ function renderMedia() {
   }
   renderLibrary();
   renderQuality();
+  renderSound();
 }
 
 function renderLibrary() {
