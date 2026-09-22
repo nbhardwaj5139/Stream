@@ -122,6 +122,15 @@ try {
   check('the guest loads the file the host picked', loaded);
   check('the guest hit no media error', (await videoState(guest)).error === null);
 
+  // A browser handed something it cannot decode must work its way down the
+  // delivery chain rather than giving up on the film.
+  const chain = await guest.evaluate(() => {
+    const probe = document.createElement('video');
+    const nativeHls = Boolean(probe.canPlayType('application/vnd.apple.mpegurl'));
+    return { nativeHls };
+  });
+  check('the browser picks a delivery route', typeof chain.nativeHls === 'boolean');
+
   const ready = await until(async () => (await videoState(guest)).readyState >= 2, { timeout: 15_000 });
   check('the guest has decodable video', ready, `readyState ${(await videoState(guest)).readyState}`);
 

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Library, publicDescription, mimeForFile, detectFfmpeg, suggestedQuality } from './media.js';
 import { readSubtitleAsVtt, extractEmbeddedSubtitle } from './subtitles.js';
 import { startTranscode, detectCapabilities, pickEncoder } from './transcode.js';
+import { HlsSessions, isSegmentName, parseSessionKey, sessionKey } from './hls.js';
 import { Room } from './room.js';
 import { attachWebSocketServer } from './ws.js';
 import {
@@ -130,6 +131,11 @@ export async function createServer(options = {}) {
 
   const connections = new Map(); // viewerId -> WebSocketConnection
   let emptyRoomTimer = null;
+
+  // Safari cannot play the fragmented-MP4 stream, so it gets HLS instead.
+  const hls = new HlsSessions();
+  const hlsSweeper = setInterval(() => hls.sweep(), 60_000);
+  hlsSweeper.unref?.();
 
   function broadcast(message, { except } = {}) {
     for (const [id, connection] of connections) {
@@ -397,6 +403,92 @@ export async function createServer(options = {}) {
     }
   }
 
+  async function serveHls(req, res, key, file, session) {
+    const parsed = parseSessionKey(key);
+    if (!parsed) {
+      sendText(res, 400, 'Bad stream id');
+      return;
+    }
+    if (!canReach(session, parsed.mediaId)) {
+      sendText(res, 403, 'Only what is playing right now.');
+      return;
+    }
+    if (!allowTranscode || !ffmpeg.ffmpeg) {
+      sendText(res, 503, 'This file needs ffmpeg, which was not found on the host machine.');
+      return;
+    }
+
+    const item = await library.describe(parsed.mediaId);
+    if (!item) {
+      sendText(res, 404, 'Not found');
+      return;
+    }
+
+    // Segments: plain file reads out of this session's directory.
+    if (isSegmentName(file)) {
+      const active = hls.touch(key);
+      const target = path.join(hls.directoryFor(key), file);
+      if (!active || !fs.existsSync(target)) {
+        sendText(res, 404, 'No such segment');
+        return;
+      }
+      const stat = await fsp.stat(target);
+      res.writeHead(200, {
+        'content-type': 'video/mp2t',
+        'content-length': stat.size,
+        'cache-control': 'no-store',
+      });
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+      const stream = fs.createReadStream(target);
+      stream.on('error', () => res.destroy());
+      res.on('close', () => stream.destroy());
+      stream.pipe(res);
+      return;
+    }
+
+    if (file !== 'playlist.m3u8') {
+      sendText(res, 404, 'Not found');
+      return;
+    }
+
+    const active = hls.start(key, {
+      filePath: item.path,
+      startSeconds: parsed.start,
+      info: item.info,
+      audioTrack: parsed.track,
+      quality: parsed.quality,
+      encoder,
+      canToneMap: encoding.canToneMap,
+    });
+
+    const playlist = await hls.waitForPlaylist(active);
+    if (!playlist) {
+      process.stderr.write(
+        `\nffmpeg could not produce HLS for ${item.relativePath}:\n` +
+          `  ${active.args.join(' ')}\n${active.stderr || '  (no output)'}\n`
+      );
+      hls.stop(key);
+      sendText(
+        res,
+        500,
+        session.role === 'host'
+          ? `ffmpeg could not play this file.\n\n${active.stderr || 'No error output.'}`
+          : 'The host machine could not prepare this file.'
+      );
+      return;
+    }
+
+    res.writeHead(200, {
+      'content-type': 'application/vnd.apple.mpegurl',
+      'cache-control': 'no-store',
+      'content-length': Buffer.byteLength(playlist),
+    });
+    res.end(req.method === 'HEAD' ? undefined : playlist);
+  }
+
   const server = http.createServer(async (req, res) => {
     let url;
     try {
@@ -524,6 +616,12 @@ export async function createServer(options = {}) {
         return;
       }
       serveTranscode(req, res, item, url, session.role === 'host');
+      return;
+    }
+
+    const hlsMatch = /^\/hls\/([A-Za-z0-9_-]+)\/([A-Za-z0-9._-]+)$/.exec(pathname);
+    if (hlsMatch) {
+      await serveHls(req, res, hlsMatch[1], hlsMatch[2], session);
       return;
     }
 
@@ -667,7 +765,9 @@ export async function createServer(options = {}) {
   const originalClose = server.close.bind(server);
   server.close = (callback) => {
     clearInterval(resync);
+    clearInterval(hlsSweeper);
     clearTimeout(emptyRoomTimer);
+    hls.stopAll();
     wss.close();
     return originalClose(callback);
   };
@@ -675,5 +775,7 @@ export async function createServer(options = {}) {
   server.library = library;
   server.room = room;
   server.capabilities = { ...ffmpeg, ...encoding, encoder };
+  server.hls = hls;
+  server.hlsKeyFor = sessionKey;
   return server;
 }

@@ -58,6 +58,7 @@ const state = {
   connected: false,
   applyingRemote: false,
   startOffset: 0,   // transcoded streams begin partway into the movie
+  deliveryIndex: 0, // how far down deliveryChain() we have had to go
   needsGesture: false,
   buffering: false,
   filter: '',
@@ -271,22 +272,60 @@ function targetPosition(room = state.room) {
   return Math.max(0, room.position + elapsed * room.rate);
 }
 
-// Original quality means the untouched file; anything else goes via ffmpeg.
-function usesTranscoder(media = state.media, quality = state.room?.quality) {
-  if (!media) return false;
-  if (media.deliveryMode === 'transcode') return true;
-  return quality !== 'original';
+// Safari reports it "cannot decode" a fragmented MP4 arriving on a chunked
+// response, but plays HLS with no player library at all. Native HLS support is
+// the reliable signal for which browsers those are.
+const NATIVE_HLS = (() => {
+  const probe = document.createElement('video');
+  return Boolean(
+    probe.canPlayType('application/vnd.apple.mpegurl') ||
+      probe.canPlayType('application/x-mpegURL')
+  );
+})();
+
+// Every way this browser could be handed the film, best first. Codec support
+// is guesswork — a container can hold anything — so rather than predict it we
+// try the next one whenever the browser says no. Nothing is "unsupported"
+// until every route has failed.
+function deliveryChain(media) {
+  const quality = state.room?.quality ?? 'original';
+  const chain = [];
+  // Untouched bytes: best picture, instant seeking, no CPU. Only when the file
+  // is already something browsers open and nobody asked to downscale.
+  if (media.deliveryMode === 'direct' && quality === 'original') chain.push('direct');
+  // Then whichever ffmpeg output this browser is known to handle, then the
+  // other one anyway, because the detection is itself a guess.
+  chain.push(NATIVE_HLS ? 'hls' : 'fmp4');
+  chain.push(NATIVE_HLS ? 'fmp4' : 'hls');
+  return chain;
 }
 
-function streamUrl(media, startSeconds) {
+function currentDelivery(media) {
+  const chain = deliveryChain(media);
+  return chain[Math.min(state.deliveryIndex, chain.length - 1)];
+}
+
+function streamUrl(media, startSeconds, mode = currentDelivery(media)) {
   if (!media) return null;
-  const transcoding = usesTranscoder(media);
-  const url = new URL(transcoding ? `/transcode/${media.id}` : `/stream/${media.id}`, location.href);
-  if (transcoding) {
-    if (startSeconds > 0) url.searchParams.set('start', String(Math.floor(startSeconds)));
-    if (state.room?.audioTrack) url.searchParams.set('track', String(state.room.audioTrack));
-    url.searchParams.set('quality', state.room?.quality ?? 'original');
+
+  const quality = state.room?.quality ?? 'original';
+  const track = state.room?.audioTrack ?? 0;
+  const start = Math.max(0, Math.floor(startSeconds || 0));
+
+  if (mode === 'direct') {
+    return new URL(`/stream/${media.id}`, location.href).toString();
   }
+
+  if (mode === 'hls') {
+    // Must match sessionKey() on the server.
+    const key = `${media.id}_q-${quality}_t-${track}_s-${start}`;
+    return new URL(`/hls/${key}/playlist.m3u8`, location.href).toString();
+  }
+
+  const url = new URL(`/transcode/${media.id}`, location.href);
+  if (start > 0) url.searchParams.set('start', String(start));
+  if (track) url.searchParams.set('track', String(track));
+  url.searchParams.set('quality', quality);
   return url.toString();
 }
 
@@ -295,7 +334,7 @@ function loadMedia(media, startSeconds = 0) {
   // Between picking a film and the first frame there can be several seconds of
   // ffmpeg start-up. Say what is happening rather than showing a black box.
   showOverlay(`Getting ${media.name} ready…`);
-  const transcoding = usesTranscoder(media);
+  const transcoding = currentDelivery(media) !== 'direct';
   state.startOffset = transcoding ? Math.floor(startSeconds) : 0;
 
   dom.video.hidden = false;
@@ -333,7 +372,7 @@ function seekLocal(position) {
   const media = state.media;
   if (!media) return;
 
-  if (usesTranscoder(media)) {
+  if (currentDelivery(media) !== 'direct') {
     const relative = position - state.startOffset;
     const buffered = dom.video.buffered;
     let covered = false;
@@ -390,6 +429,7 @@ function applyState(room, { initial = false } = {}) {
     fetchMedia(room.mediaId).then((media) => {
       if (!media || state.room?.mediaId !== media.id) return;
       state.media = media;
+      state.deliveryIndex = 0;
       loadMedia(media, targetPosition());
       syncToRoom({ force: true });
     });
@@ -398,6 +438,7 @@ function applyState(room, { initial = false } = {}) {
 
   if (encodingChanged) {
     // ffmpeg has to be restarted with different settings; pick up where we are.
+    state.deliveryIndex = 0;
     loadMedia(state.media, targetPosition());
   }
 
@@ -556,7 +597,11 @@ function renderMedia() {
     dom.nowPlaying.textContent = 'Stream';
     document.title = 'Stream';
   } else {
-    const tags = [resolutionLabel(media.height), media.hdr ? 'HDR' : '', usesTranscoder(media) ? 'converting' : 'original']
+    const tags = [
+      resolutionLabel(media.height),
+      media.hdr ? 'HDR' : '',
+      currentDelivery(media) === 'direct' ? 'original' : 'converting',
+    ]
       .filter(Boolean)
       .join(' · ');
     dom.nowPlaying.textContent = media.name;
@@ -704,8 +749,8 @@ for (const event of ['playing', 'canplay', 'seeked']) {
   });
 }
 
-// The <video> error event says nothing useful, so ask the server directly:
-// it knows whether ffmpeg refused the file, and why.
+// The <video> error event says nothing useful, so try the next way of
+// delivering the film before concluding anything is wrong with it.
 async function explainPlaybackFailure() {
   const media = state.media;
   if (!media) return;
@@ -715,6 +760,17 @@ async function explainPlaybackFailure() {
     return;
   }
 
+  const chain = deliveryChain(media);
+  if (state.deliveryIndex < chain.length - 1) {
+    state.deliveryIndex += 1;
+    showOverlay(`Getting ${media.name} ready…`);
+    loadMedia(media, targetPosition());
+    syncToRoom({ force: true });
+    return;
+  }
+
+  // Every route failed. Ask the server what it made of the last one, because
+  // it is the only side that can see ffmpeg's own complaint.
   showOverlay('Could not play that. Checking why…');
   try {
     const response = await fetch(streamUrl(media, state.startOffset), {
@@ -722,7 +778,7 @@ async function explainPlaybackFailure() {
     });
     if (response.ok) {
       response.body?.cancel();
-      showOverlay('This browser could not decode that file. Try a lower quality.');
+      showOverlay('This browser could not decode that file, even converted.');
       return;
     }
     const detail = (await response.text()).trim();
