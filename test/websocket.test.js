@@ -457,3 +457,41 @@ test('a browser closing its tab actually removes the viewer', async () => {
   assert.ok(gone.viewers.some((v) => v.id === mine.you.id), 'we are still here');
   watcher.close();
 });
+
+test('WebRTC signalling reaches the named peer and nobody else', async () => {
+  const host = connect(hostCookie);
+  const guest = connect(guestCookie);
+  await Promise.all([host.opened(), guest.opened()]);
+  const hostWelcome = await host.next('welcome');
+  const guestWelcome = await guest.next('welcome');
+
+  host.send({
+    type: 'signal',
+    to: guestWelcome.you.id,
+    data: { sdp: { type: 'offer', sdp: 'v=0' } },
+  });
+
+  const signal = await guest.next('signal');
+  assert.equal(signal.from, hostWelcome.you.id);
+  assert.equal(signal.data.sdp.type, 'offer');
+  assert.ok(!host.received.some((m) => m.type === 'signal'), 'the sender does not see its own');
+
+  // Answering goes back the other way.
+  guest.send({ type: 'signal', to: hostWelcome.you.id, data: { sdp: { type: 'answer', sdp: 'v=0' } } });
+  const answer = await host.next('signal');
+  assert.equal(answer.data.sdp.type, 'answer');
+
+  host.close();
+  guest.close();
+});
+
+test('a guest cannot put the room on the host screen', async () => {
+  const guest = connect(guestCookie);
+  await guest.opened();
+  await guest.next('welcome');
+
+  guest.send({ type: 'control', action: 'source', source: 'screen' });
+  const error = await guest.next('error');
+  assert.match(error.error, /only the host/i);
+  guest.close();
+});

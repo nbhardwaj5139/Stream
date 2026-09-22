@@ -54,7 +54,13 @@ console.log(`serving ${MEDIA_DIR} on ${base}\n`);
 
 const browser = await chromium.launch({
   executablePath: EXECUTABLE,
-  args: ['--autoplay-policy=no-user-gesture-required'],
+  args: [
+    '--autoplay-policy=no-user-gesture-required',
+    // Screen capture without a picker, a human to click it, or a real screen.
+    '--use-fake-ui-for-media-stream',
+    '--use-fake-device-for-media-stream',
+    '--auto-select-desktop-capture-source=Entire screen',
+  ],
 });
 
 // Join the way a real person does: open the link, type the passcode.
@@ -260,6 +266,48 @@ try {
 
   const buttonLabel = await host.textContent('#btn-library');
   check('the library button says what it does now', /Change film/.test(buttonLabel), buttonLabel.trim());
+
+  // --- screen sharing ------------------------------------------------------
+  check('only the host is offered screen sharing', await host.isVisible('#btn-share'));
+  check('the guest is not', !(await guest.isVisible('#btn-share')));
+
+  await host.click('#btn-share');
+
+  const inScreenMode = await until(
+    async () => (await guest.textContent('#sync-badge')) === 'Watching their screen',
+    { timeout: 15_000 }
+  );
+  check('the guest is switched to the shared screen', inScreenMode, await guest.textContent('#sync-badge'));
+
+  // The real test: a live track actually arriving over WebRTC.
+  const received = await until(async () => {
+    const state = await guest.evaluate(() => {
+      const video = document.getElementById('video');
+      const stream = video.srcObject;
+      return {
+        tracks: stream ? stream.getVideoTracks().length : 0,
+        live: stream ? stream.getVideoTracks().every((t) => t.readyState === 'live') : false,
+        width: video.videoWidth,
+      };
+    });
+    return state.tracks > 0 && state.live && state.width > 0;
+  }, { timeout: 25_000 });
+
+  const detail = await guest.evaluate(() => {
+    const video = document.getElementById('video');
+    return `${video.videoWidth}x${video.videoHeight}`;
+  });
+  check('the host\u2019s screen reaches the guest over WebRTC', received, detail);
+
+  const hostBadge = await host.textContent('#sync-badge');
+  check('the host is told they are sharing', hostBadge === 'Sharing your screen', hostBadge);
+
+  await host.click('#btn-share');
+  const backToFiles = await until(
+    async () => (await guest.textContent('#sync-badge')) !== 'Watching their screen',
+    { timeout: 15_000 }
+  );
+  check('stopping the share returns the room to files', backToFiles);
 
   // --- the session survives a reload ---------------------------------------
   await guest.reload();

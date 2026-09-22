@@ -1,4 +1,5 @@
 // Client: keeps this browser's <video> lined up with the room's shared clock.
+import { ScreenShare } from './screen.js';
 
 const HARD_SEEK_THRESHOLD = 1.5;   // seconds out before we jump
 const SOFT_NUDGE_THRESHOLD = 0.25; // seconds out before we speed up/slow down
@@ -28,6 +29,7 @@ const dom = {
   btnFullscreen: el('btn-fullscreen'),
   btnReload: el('btn-reload'),
   btnExit: el('btn-exit'),
+  btnShare: el('btn-share'),
   btnLibrary: el('btn-library'),
   btnPanel: el('btn-panel'),
   panelLabel: el('panel-label'),
@@ -71,6 +73,7 @@ const state = {
   buffering: false,
   filter: '',
   entered: false,
+  screen: null,
 };
 
 // ------------------------------------------------------------------ misc --
@@ -242,9 +245,23 @@ function handleMessage(message) {
       renderMedia();
       break;
 
-    case 'presence':
+    case 'presence': {
+      const known = new Set(state.viewers.map((viewer) => viewer.id));
       state.viewers = message.viewers ?? [];
+      // Somebody who joins mid-share needs their own offer.
+      if (screenShare.sharing) {
+        for (const viewer of state.viewers) {
+          if (viewer.id !== state.me?.id && !known.has(viewer.id)) screenShare.offerTo(viewer.id);
+        }
+      }
       renderPresence();
+      break;
+    }
+
+    case 'signal':
+      screenShare.handleSignal(message).catch(() => {
+        showOverlay('Could not connect to their screen.');
+      });
       break;
 
     case 'chat':
@@ -420,6 +437,31 @@ function applyState(room, { initial = false } = {}) {
   const previous = state.room;
   state.room = room;
 
+  if (room.source === 'screen') {
+    if (previous?.source !== 'screen') {
+      // Leaving the file behind: a live stream has no shared clock to follow.
+      dom.video.removeAttribute('src');
+      dom.video.pause();
+      state.media = null;
+      dom.placeholder.hidden = true;
+      dom.video.hidden = false;
+      if (!screenShare.sharing) showOverlay('Connecting to their screen…');
+    }
+    renderPermissions();
+    renderQuality();
+    updateSyncBadge();
+    return;
+  }
+
+  if (previous?.source === 'screen') {
+    // Back to files: drop the peer connections and the live track.
+    if (screenShare.sharing) screenShare.stop();
+    else screenShare.closeAll();
+    dom.video.srcObject = null;
+    dom.video.muted = false;
+    hideOverlay();
+  }
+
   const mediaChanged = !previous || previous.mediaId !== room.mediaId;
   const encodingChanged =
     previous &&
@@ -473,7 +515,8 @@ async function fetchMedia(id) {
 
 function syncToRoom({ force = false } = {}) {
   const room = state.room;
-  if (!room || !state.media) return;
+  // A shared screen is live: there is nothing to seek and nothing to line up.
+  if (!room || room.source === 'screen' || !state.media) return;
 
   const target = targetPosition();
   const drift = currentPosition() - target;
@@ -523,6 +566,11 @@ function updateSyncBadge() {
   if (!state.connected) {
     badge.textContent = 'Reconnecting…';
     badge.dataset.state = 'offline';
+    return;
+  }
+  if (room?.source === 'screen') {
+    badge.textContent = screenShare.sharing ? 'Sharing your screen' : 'Watching their screen';
+    badge.dataset.state = 'ok';
     return;
   }
   if (!room?.mediaId) {
@@ -587,6 +635,8 @@ function renderEmptyState() {
 
 function renderPermissions() {
   const allowed = canBrowse();
+  // Only the host has a screen, and only some browsers will hand it over.
+  dom.btnShare.hidden = state.role !== 'host' || !navigator.mediaDevices?.getDisplayMedia;
   dom.btnLibrary.hidden = !allowed;
   dom.placeholderBrowse.hidden = !allowed;
   // Stopping puts everyone back to the empty room, so it belongs to whoever
@@ -601,12 +651,19 @@ function renderPermissions() {
 }
 
 function renderQuality() {
-  dom.qualityWrap.hidden = !state.media;
+  // Quality is ffmpeg's business; a shared screen negotiates its own.
+  dom.qualityWrap.hidden = !state.media || isScreenMode();
   if (state.media && state.room?.quality) dom.quality.value = state.room.quality;
 }
 
 function renderMedia() {
   const media = state.media;
+  if (isScreenMode()) {
+    dom.nowPlaying.textContent = screenShare.sharing ? 'Sharing your screen' : 'Their screen';
+    document.title = 'Screen — Stream';
+    renderQuality();
+    return;
+  }
   if (!media) {
     dom.nowPlaying.textContent = 'Stream';
     document.title = 'Stream';
@@ -725,17 +782,17 @@ function appendChat(entry, { quiet = false } = {}) {
 // ---------------------------------------------------------------- events --
 
 dom.video.addEventListener('play', () => {
-  if (state.applyingRemote) return;
+  if (state.applyingRemote || isScreenMode()) return;
   control('play', { position: currentPosition() });
 });
 
 dom.video.addEventListener('pause', () => {
-  if (state.applyingRemote || dom.video.ended) return;
+  if (state.applyingRemote || isScreenMode() || dom.video.ended) return;
   control('pause', { position: currentPosition() });
 });
 
 dom.video.addEventListener('seeked', () => {
-  if (state.applyingRemote) return;
+  if (state.applyingRemote || isScreenMode()) return;
   const position = currentPosition();
   if (Math.abs(position - targetPosition()) < 0.75) return;
   control('seek', { position });
@@ -809,6 +866,7 @@ async function explainPlaybackFailure() {
 }
 
 dom.video.addEventListener('error', () => {
+  if (isScreenMode()) return;
   explainPlaybackFailure();
 });
 
@@ -970,6 +1028,82 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+// ------------------------------------------------------------ screen share --
+
+const isScreenMode = () => state.room?.source === 'screen';
+
+const screenShare = new ScreenShare({
+  send: (message) => send(message),
+  onStream: (stream) => {
+    // Guest side: the host's screen has arrived.
+    dom.video.srcObject = stream;
+    dom.video.muted = false;
+    dom.video.hidden = false;
+    dom.placeholder.hidden = true;
+    hideOverlay();
+    playVideo();
+  },
+  onStateChange: (id, connectionState) => {
+    if (connectionState === 'failed' && !screenShare.sharing) {
+      showOverlay('Lost the connection to their screen. Trying again…');
+    }
+  },
+  onEnded: () => {
+    dom.btnShare.querySelector('span').textContent = 'Share screen';
+    dom.btnShare.setAttribute('aria-pressed', 'false');
+    if (isScreenMode()) control('source', { source: 'file' });
+  },
+});
+state.screen = screenShare;
+
+async function startSharing() {
+  let started;
+  try {
+    started = await screenShare.start();
+  } catch (error) {
+    toast(
+      error.name === 'NotAllowedError'
+        ? 'Screen share was cancelled.'
+        : `Could not capture the screen (${error.name}).`
+    );
+    return;
+  }
+
+  if (!started.hasAudio) {
+    toast(
+      started.audioUnavailable
+        ? 'Sharing without sound — this machine would not hand over its audio.'
+        : 'No sound was captured — tick "Share system audio" in the picker next time.',
+      7000
+    );
+  }
+
+  dom.btnShare.querySelector('span').textContent = 'Stop sharing';
+  dom.btnShare.setAttribute('aria-pressed', 'true');
+  control('source', { source: 'screen' });
+
+  // Show the host their own screen, muted, or the room echoes.
+  dom.video.removeAttribute('src');
+  dom.video.srcObject = started.stream;
+  dom.video.muted = true;
+  dom.video.hidden = false;
+  dom.placeholder.hidden = true;
+  playVideo();
+
+  for (const viewer of state.viewers) {
+    if (viewer.id !== state.me?.id) screenShare.offerTo(viewer.id);
+  }
+}
+
+dom.btnShare.addEventListener('click', () => {
+  if (screenShare.sharing) {
+    screenShare.stop();
+    control('source', { source: 'file' });
+  } else {
+    startSharing();
+  }
+});
+
 // --------------------------------------------------------------- the gate --
 
 function showGate(message) {
@@ -1039,6 +1173,10 @@ dom.joinForm.addEventListener('submit', async (event) => {
 
 setInterval(() => {
   if (!state.connected) return;
+  if (isScreenMode()) {
+    updateSyncBadge();
+    return;
+  }
   send({
     type: 'report',
     position: state.media ? currentPosition() : null,

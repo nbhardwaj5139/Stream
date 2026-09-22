@@ -97,7 +97,7 @@ function readJsonBody(req) {
 // sessions on every page load.
 async function assetVersion() {
   const hash = crypto.createHash('sha1');
-  for (const name of ['app.js', 'styles.css']) {
+  for (const name of ['app.js', 'screen.js', 'styles.css']) {
     try {
       hash.update(await fsp.readFile(path.join(PUBLIC_DIR, name)));
     } catch {
@@ -769,6 +769,14 @@ export async function createServer(options = {}) {
 
         case 'browsing': {
           if (room.setBrowsing(self, message.value)) broadcastPresence();
+          break;
+        }
+
+        case 'signal': {
+          // WebRTC offer/answer/ICE, passed between two viewers in this room.
+          // The server never inspects it; the media never touches the server.
+          const target = connections.get(message.to);
+          if (target) target.send({ type: 'signal', from: self.id, data: message.data });
           break;
         }
 

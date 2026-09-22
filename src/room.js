@@ -33,6 +33,9 @@ export class Room {
     this.maxBufferHoldMs = maxBufferHoldMs;
     this.clock = clock;
 
+    // 'file' plays something off the disk; 'screen' is the host's screen over
+    // WebRTC, which sidesteps every codec question and adapts to the link.
+    this.source = 'file';
     this.mediaId = null;
     this.paused = true;
     this.rate = 1;
@@ -175,8 +178,27 @@ export class Room {
         return { changed: true, reason: 'rate', by: viewer.id };
       }
 
+      case 'source': {
+        if (message.source !== 'file' && message.source !== 'screen') {
+          return { changed: false, reason: 'bad-source' };
+        }
+        // Only the host has a screen to share.
+        if (message.source === 'screen' && viewer.role !== 'host') {
+          return { changed: false, reason: 'not-allowed' };
+        }
+        if (this.source === message.source) return { changed: false };
+        this.source = message.source;
+        this.paused = true;
+        this.pausedBy = null;
+        this.waitingFor = null;
+        this.waitingSince = null;
+        this._anchor(0, timestamp);
+        return { changed: true, reason: 'source', by: viewer.id };
+      }
+
       case 'select': {
         if (!this.canBrowse(viewer)) return { changed: false, reason: 'not-allowed-browse' };
+        this.source = 'file';
         this.mediaId = typeof message.mediaId === 'string' ? message.mediaId : null;
         this.paused = true;
         this.rate = 1;
@@ -222,7 +244,7 @@ export class Room {
     const wasBuffering = viewer.buffering;
     viewer.buffering = Boolean(message.buffering);
 
-    if (!this.autoPauseOnBuffer) return { changed: false };
+    if (!this.autoPauseOnBuffer || this.source === 'screen') return { changed: false };
 
     if (viewer.buffering && !wasBuffering && !this.paused) {
       // Freeze where the movie is *now*, before flipping the flag: once paused,
@@ -293,6 +315,7 @@ export class Room {
   // Back to an empty room: nothing playing, nothing waiting. Chat is kept —
   // it is the conversation, not the playback state.
   clearPlayback() {
+    this.source = 'file';
     this.mediaId = null;
     this.waitingSince = null;
     this.paused = true;
@@ -311,6 +334,7 @@ export class Room {
       type: 'state',
       version: this.version,
       serverTime: timestamp,
+      source: this.source,
       mediaId: this.mediaId,
       paused: this.paused,
       position: this.positionAt(timestamp),

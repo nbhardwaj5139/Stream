@@ -194,6 +194,38 @@ oscillates: pause, resume, stall, pause again, which is worse to watch than a
 bit of drift. When it is on, the wait is capped at 30 seconds so a viewer who
 never becomes playable cannot hold the film indefinitely.
 
+## Sharing your screen instead
+
+There is a **Share screen** button next to the film list, host only. It switches
+the room from playing a file to sending whatever is on your screen, over a
+direct connection to each viewer. The picture never passes through the server.
+
+Use it when the file route is fighting you. It has one decisive advantage: it
+measures the link continuously and drops quality to fit. An HTTP stream picks a
+bitrate and stalls when the connection cannot keep up; a screen share goes soft
+for a second and carries on. On a connection that is merely adequate, that is
+the difference between watching a film and managing one.
+
+It also sidesteps formats entirely. Nothing is transcoded, no container is
+negotiated, and a browser that struggles with your files will show a shared
+screen without complaint.
+
+What it costs:
+
+- **Quality.** The picture is captured and re-encoded live, so it is softer than
+  the file, and dark scenes band. It is capped at 1080p — your screen is the
+  source, and a phone cannot show more anyway.
+- **Your laptop encodes continuously** while it runs.
+- **Sound needs to be captured too.** Tick "Share system audio" or "Share tab
+  audio" in the picker; the room will tell you if nothing came through. On
+  Windows this works directly. If the machine refuses audio, the share
+  continues without it rather than failing.
+- **It needs a direct connection.** Public STUN servers are used and no relay,
+  so a strict corporate network can block it where plain HTTPS would not.
+
+Playback controls do nothing during a share, because a live stream has nothing
+to seek. Picking a film from the library ends the share by itself.
+
 ## Quality, and what 4K actually costs
 
 There are two ways a file reaches her, and the quality selector in the player
@@ -272,8 +304,9 @@ Keyboard: <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> jump 10s 
   fragmented MP4 and Safari takes HLS, so a laptop and an iPhone watching the
   same converted film run ffmpeg twice. A GPU encoder shrugs at that; software
   x264 will not.
-- **This does not share your screen.** It plays files from the folders you
-  chose. Anything that isn't a file on your disk is out of scope.
+- **A shared screen is capped at 1080p and is not the original picture.** It is
+  a live re-encode of what your monitor shows. For the file route, 4K is capped
+  by your upload rather than by the code.
 
 ## Security
 
@@ -304,7 +337,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 119 unit and integration tests, no dependencies needed
+npm test          # 128 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright
@@ -328,3 +361,4 @@ node test/e2e/browser.mjs /path/to/a/folder/with/a/video
 | `src/hls.js` | HLS segmenting, for Safari and anything else fussy |
 | `src/subtitles.js` | SRT/ASS → WebVTT |
 | `public/app.js` | the player, drift correction, chat |
+| `public/screen.js` | WebRTC screen sharing and its audio negotiation |
