@@ -228,6 +228,20 @@ try {
   });
   check('the home-screen icon loads', iconOk);
   check('there is a fullscreen control', await host.isVisible('#btn-fullscreen'));
+  // Installed to a home screen there is no browser chrome, so the page carries
+  // its own reload.
+  check('there is a reload control', await host.isVisible('#btn-reload'));
+  const reloaded = await host.evaluate(async () => {
+    document.getElementById('btn-reload').click();
+    return true;
+  });
+  check('reload is wired up', reloaded);
+  await host.waitForSelector('#join-form', { state: 'visible', timeout: 10_000 });
+  check('reloading lands back on the passcode screen', await host.isVisible('#join-form'));
+
+  await host.fill('#passcode', HOST_PASSCODE);
+  await host.click('#submit');
+  await host.waitForSelector('#btn-panel', { state: 'visible', timeout: 10_000 });
 
   // --- the state is described in words -------------------------------------
   const guestIdle = await guest.textContent('#sync-badge');

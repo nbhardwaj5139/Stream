@@ -26,6 +26,8 @@ const dom = {
   btnStop: el('btn-stop'),
   screen: document.querySelector('.screen'),
   btnFullscreen: el('btn-fullscreen'),
+  btnReload: el('btn-reload'),
+  btnExit: el('btn-exit'),
   btnLibrary: el('btn-library'),
   btnPanel: el('btn-panel'),
   panelLabel: el('panel-label'),
@@ -839,6 +841,22 @@ function renderFullscreenButton() {
   dom.btnFullscreen.textContent = isFullscreen() ? 'Exit fullscreen' : 'Fullscreen';
   dom.btnFullscreen.setAttribute('aria-pressed', String(isFullscreen()));
 }
+
+// Added to the home screen there is no browser chrome, so the page has to
+// carry its own way out and its own way to start over.
+const STANDALONE =
+  window.matchMedia?.('(display-mode: standalone)').matches ||
+  window.navigator.standalone === true;
+
+dom.btnExit.hidden = !STANDALONE;
+
+dom.btnReload.addEventListener('click', () => location.reload());
+
+dom.btnExit.addEventListener('click', async () => {
+  await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+  state.socket?.close();
+  showGate();
+});
 
 dom.btnFullscreen.addEventListener('click', toggleFullscreen);
 for (const event of ['fullscreenchange', 'webkitfullscreenchange']) {
