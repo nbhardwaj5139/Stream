@@ -398,3 +398,28 @@ test('the session ends with the browser unless devices are remembered', async ()
   assert.match(remembered.headers.get('set-cookie'), /Max-Age=\d+/);
   await new Promise((resolve) => remembering.close(resolve));
 });
+
+test('the page points at versioned scripts so a stale client cannot persist', async () => {
+  const html = await (await fetch(`${baseUrl}/`)).text();
+
+  const scripts = [...html.matchAll(/(?:src|href)="\/static\/(app\.js|styles\.css)\?v=([a-f0-9]+)"/g)];
+  assert.equal(scripts.length, 2, 'both the script and the stylesheet are versioned');
+  assert.doesNotMatch(html, /\{\{ASSETS\}\}/, 'the placeholder is filled in');
+
+  // Same content, same stamp — the page is not cache-busted on every load.
+  const again = await (await fetch(`${baseUrl}/`)).text();
+  assert.equal(
+    [...again.matchAll(/\?v=([a-f0-9]+)/g)][0][1],
+    scripts[0][2],
+    'the stamp is derived from the files, not generated per request'
+  );
+
+  const version = scripts[0][2];
+  const versioned = await fetch(`${baseUrl}/static/app.js?v=${version}`);
+  assert.equal(versioned.status, 200);
+  assert.match(versioned.headers.get('cache-control'), /immutable/);
+
+  // Without the stamp it must be revalidated, or an old copy could stick.
+  const plain = await fetch(`${baseUrl}/static/app.js`);
+  assert.match(plain.headers.get('cache-control'), /no-cache/);
+});

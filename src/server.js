@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { Library, publicDescription, mimeForFile, detectFfmpeg, suggestedQuality } from './media.js';
@@ -90,6 +91,22 @@ function readJsonBody(req) {
   });
 }
 
+// A version stamp for the page's own scripts. Without it a browser can keep
+// running yesterday's app.js against today's server — which is how a stale
+// client ended up in a reload loop against a server that had started clearing
+// sessions on every page load.
+async function assetVersion() {
+  const hash = crypto.createHash('sha1');
+  for (const name of ['app.js', 'styles.css']) {
+    try {
+      hash.update(await fsp.readFile(path.join(PUBLIC_DIR, name)));
+    } catch {
+      hash.update(name);
+    }
+  }
+  return hash.digest('hex').slice(0, 12);
+}
+
 export async function createServer(options = {}) {
   const {
     roots = [process.cwd()],
@@ -118,6 +135,8 @@ export async function createServer(options = {}) {
     host: hashPasscode(hostPasscode),
     guest: hashPasscode(guestPasscode),
   };
+
+  const assets = await assetVersion();
 
   const library = new Library(roots);
   await library.scan();
@@ -227,7 +246,9 @@ export async function createServer(options = {}) {
     const type = STATIC_TYPES[extension] ?? 'application/octet-stream';
 
     if (extension === '.html') {
-      const html = (await fsp.readFile(filePath, 'utf8')).replaceAll('{{ROOM_NAME}}', escapeHtml(roomName));
+      const html = (await fsp.readFile(filePath, 'utf8'))
+        .replaceAll('{{ROOM_NAME}}', escapeHtml(roomName))
+        .replaceAll('{{ASSETS}}', assets);
       res.writeHead(200, {
         'content-type': type,
         'content-length': Buffer.byteLength(html),
@@ -238,10 +259,11 @@ export async function createServer(options = {}) {
       return;
     }
 
+    const versioned = (req.url ?? '').includes('v=');
     res.writeHead(200, {
       'content-type': type,
       'content-length': stat.size,
-      'cache-control': 'no-cache',
+      'cache-control': versioned ? 'public, max-age=31536000, immutable' : 'no-cache',
       ...extraHeaders,
     });
     if (req.method === 'HEAD') {
@@ -568,6 +590,7 @@ export async function createServer(options = {}) {
         ffmpeg: ffmpeg.ffmpeg,
         ffprobe: ffmpeg.ffprobe,
         encoder,
+        assets,
         hardwareEncoding: encoder !== 'libx264',
         canToneMap: encoding.canToneMap,
         roots: session.role === 'host' ? library.roots : undefined,
