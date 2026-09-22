@@ -71,6 +71,9 @@ export class Room {
       position: null,
       paused: true,
       buffering: false,
+      // True while they have the film list open, so the other side is told
+      // somebody is choosing rather than left staring at an empty room.
+      browsing: false,
       drift: null,
     };
     this.viewers.set(id, viewer);
@@ -93,6 +96,14 @@ export class Room {
   canControl(viewer) {
     if (!viewer) return false;
     if (this.controlMode === 'host') return viewer.role === 'host';
+    return true;
+  }
+
+  setBrowsing(viewer, value) {
+    if (!viewer) return false;
+    const next = Boolean(value) && this.canBrowse(viewer);
+    if (viewer.browsing === next) return false;
+    viewer.browsing = next;
     return true;
   }
 
@@ -292,6 +303,7 @@ export class Room {
         name: viewer.name,
         role: viewer.role,
         buffering: viewer.buffering,
+        browsing: viewer.browsing,
         drift: viewer.drift === null ? null : Math.round(viewer.drift * 100) / 100,
       })),
     };

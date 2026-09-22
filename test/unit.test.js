@@ -491,3 +491,20 @@ test('an emptied room forgets what was playing but keeps the conversation', () =
   assert.equal(room.pausedBy, null);
   assert.equal(room.chat.length, 1, 'chat is the conversation, not playback state');
 });
+
+test('browsing is announced, but only for someone allowed to browse', () => {
+  const room = new Room();
+  const host = room.addViewer({ role: 'host' });
+  const guest = room.addViewer({ role: 'guest' });
+
+  assert.equal(room.setBrowsing(host, true), true);
+  assert.equal(room.presence().viewers.find((v) => v.id === host.id).browsing, true);
+
+  // Setting it again is not a change worth broadcasting.
+  assert.equal(room.setBrowsing(host, true), false);
+  assert.equal(room.setBrowsing(host, false), true);
+
+  // A guest has no film list, so cannot be "choosing".
+  assert.equal(room.setBrowsing(guest, true), false);
+  assert.equal(guest.browsing, false);
+});

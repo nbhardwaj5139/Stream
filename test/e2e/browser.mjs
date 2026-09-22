@@ -74,7 +74,9 @@ async function openClient(passcode, name) {
   // Chat, not the library button: the library is host-only, and #video stays
   // hidden until somebody picks a film.
   await page.waitForSelector('#btn-panel', { state: 'visible', timeout: 10_000 });
-  await page.waitForFunction(() => document.getElementById('sync-badge')?.textContent !== 'reconnecting');
+  await page.waitForFunction(
+    () => document.getElementById('sync-badge')?.dataset.state !== 'offline'
+  );
   return page;
 }
 
@@ -107,6 +109,12 @@ try {
   await host.click('#btn-library');
   const titles = await host.$$eval('#library-list .title', (nodes) => nodes.map((n) => n.textContent));
   check('library lists the video file', titles.length >= 1, titles.join(', '));
+
+  // --- the other side is told somebody is choosing -------------------------
+  const chooserShown = await until(async () =>
+    /is choosing/.test(await guest.textContent('#placeholder-title'))
+  );
+  check('the guest is told the host is choosing', chooserShown, await guest.textContent('#placeholder-title'));
 
   // --- host picks something -----------------------------------------------
   await host.click('#library-list button');
@@ -211,6 +219,24 @@ try {
   });
   check('the home-screen icon loads', iconOk);
   check('there is a fullscreen control', await host.isVisible('#btn-fullscreen'));
+
+  // --- the state is described in words -------------------------------------
+  const guestIdle = await guest.textContent('#sync-badge');
+  check('an idle room says so plainly', guestIdle === 'Nothing playing', guestIdle);
+
+  await host.click('#btn-library');
+  await host.click('#library-list button');
+  await until(async () => (await videoState(guest)).src !== null);
+  await host.evaluate(() => document.getElementById('video').play());
+  const playing = await until(async () => (await host.textContent('#sync-badge')) === 'Playing');
+  check('a playing room says "Playing"', playing, await host.textContent('#sync-badge'));
+
+  await host.evaluate(() => document.getElementById('video').pause());
+  const pausedWord = await until(async () => (await guest.textContent('#sync-badge')) === 'Paused');
+  check('a paused room says "Paused" on the other side', pausedWord, await guest.textContent('#sync-badge'));
+
+  const buttonLabel = await host.textContent('#btn-library');
+  check('the library button says what it does now', /Change film/.test(buttonLabel), buttonLabel.trim());
 
   // --- the session survives a reload ---------------------------------------
   await guest.reload();

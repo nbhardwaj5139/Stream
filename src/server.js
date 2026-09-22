@@ -619,6 +619,11 @@ export async function createServer(options = {}) {
           break;
         }
 
+        case 'browsing': {
+          if (room.setBrowsing(self, message.value)) broadcastPresence();
+          break;
+        }
+
         case 'chat': {
           const entry = room.addChat(self, message.text);
           if (entry) broadcast({ type: 'chat', entry });

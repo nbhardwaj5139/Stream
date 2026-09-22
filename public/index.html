@@ -31,9 +31,10 @@
               <path d="M10 9.5v5l4-2.5z" fill="currentColor" stroke="none"/>
             </svg>
           </div>
-          <h1>Nothing playing yet</h1>
-          <p id="placeholder-text">Pick something from the library to get started.</p>
-          <button id="placeholder-browse" class="button primary">Open library</button>
+          <h1 id="placeholder-title">Nothing playing yet</h1>
+          <p id="placeholder-text">Pick something to watch and it will start for both of you.</p>
+          <button id="placeholder-browse" class="button primary big">Choose a film</button>
+          <p id="placeholder-hint" class="hint-line"></p>
         </div>
       </div>
 
@@ -48,31 +49,56 @@
     <div class="bar">
       <div class="bar-left">
         <span id="role-badge" class="role" hidden></span>
-        <span id="now-playing" class="now-playing">Stream</span>
-        <span id="sync-badge" class="badge" title="Difference between your position and the room's">in sync</span>
+        <span id="now-playing" class="now-playing">Nothing playing</span>
+        <span id="sync-badge" class="badge">Connecting…</span>
       </div>
+
       <div class="bar-right">
         <label id="quality-wrap" class="quality" hidden>
-          <span class="visually-hidden">Quality</span>
-          <select id="quality" class="select" title="Lower this if their side keeps buffering">
-            <option value="original">Original</option>
+          <span class="visually-hidden">Picture quality</span>
+          <select id="quality" class="select" title="Lower this if the picture keeps stopping">
+            <option value="original">Best quality</option>
             <option value="high">1080p</option>
             <option value="medium">720p</option>
-            <option value="low">480p</option>
+            <option value="low">480p — slowest connection</option>
           </select>
         </label>
-        <button id="btn-resync" class="button ghost" title="Jump back to everyone else">Re-sync</button>
-        <button id="btn-stop" class="button ghost" title="Stop this film and go back to the library" hidden>Stop</button>
-        <button id="btn-fullscreen" class="button ghost" title="Fill the screen">Fullscreen</button>
-        <button id="btn-library" class="button ghost">Library</button>
-        <button id="btn-panel" class="button ghost" aria-expanded="false">Chat</button>
+
+        <button id="btn-resync" class="button" title="Jump to where everyone else is">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg>
+          <span>Catch up</span>
+        </button>
+
+        <button id="btn-fullscreen" class="button" title="Fill the screen (F)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+          <span>Fullscreen</span>
+        </button>
+
+        <button id="btn-stop" class="button" title="Stop and go back to the film list" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          <span>Stop</span>
+        </button>
+
+        <button id="btn-library" class="button primary" title="Choose what to watch">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          <span>Choose a film</span>
+        </button>
+
+        <button id="btn-panel" class="button" aria-expanded="false" title="Chat and who is watching">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span id="panel-label">Chat</span>
+        </button>
       </div>
     </div>
+
   </main>
 
   <aside class="panel" id="panel">
     <header class="panel-head">
-      <div class="who" id="presence"></div>
+      <div>
+        <div class="panel-title">Watching now</div>
+        <div class="who" id="presence"></div>
+      </div>
       <div class="panel-actions">
         <button id="btn-leave" class="button ghost" title="Sign out of the room">Leave</button>
         <button id="btn-panel-close" class="icon-button" aria-label="Close panel">×</button>

@@ -10,7 +10,9 @@ const dom = {
   app: el('app'),
   video: el('video'),
   placeholder: el('placeholder'),
+  placeholderTitle: el('placeholder-title'),
   placeholderText: el('placeholder-text'),
+  placeholderHint: el('placeholder-hint'),
   placeholderBrowse: el('placeholder-browse'),
   overlay: el('overlay'),
   overlayText: el('overlay-text'),
@@ -26,6 +28,7 @@ const dom = {
   btnFullscreen: el('btn-fullscreen'),
   btnLibrary: el('btn-library'),
   btnPanel: el('btn-panel'),
+  panelLabel: el('panel-label'),
   btnPanelClose: el('btn-panel-close'),
   btnLeave: el('btn-leave'),
   presence: el('presence'),
@@ -289,6 +292,9 @@ function streamUrl(media, startSeconds) {
 
 function loadMedia(media, startSeconds = 0) {
   if (!media) return;
+  // Between picking a film and the first frame there can be several seconds of
+  // ffmpeg start-up. Say what is happening rather than showing a black box.
+  showOverlay(`Getting ${media.name} ready…`);
   const transcoding = usesTranscoder(media);
   state.startOffset = transcoding ? Math.floor(startSeconds) : 0;
 
@@ -373,9 +379,7 @@ function applyState(room, { initial = false } = {}) {
     dom.video.removeAttribute('src');
     dom.video.hidden = true;
     dom.placeholder.hidden = false;
-    dom.placeholderText.textContent = canBrowse()
-      ? 'Pick something from the library to get started.'
-      : 'Waiting for the host to pick something.';
+    renderEmptyState();
     hideOverlay();
     renderPermissions();
     updateSyncBadge();
@@ -451,25 +455,50 @@ function syncToRoom({ force = false } = {}) {
   }
 }
 
+function nameOf(id) {
+  return state.viewers.find((viewer) => viewer.id === id)?.name ?? 'the other side';
+}
+
+// Says what is happening in words, because "0.4s drift" means nothing to
+// somebody who just opened a link on an iPad.
 function updateSyncBadge() {
+  const badge = dom.syncBadge;
+  const room = state.room;
+
   if (!state.connected) {
-    dom.syncBadge.textContent = 'reconnecting';
-    dom.syncBadge.dataset.state = 'offline';
+    badge.textContent = 'Reconnecting…';
+    badge.dataset.state = 'offline';
     return;
   }
-  if (!state.media) {
-    dom.syncBadge.textContent = 'connected';
-    dom.syncBadge.dataset.state = 'ok';
+  if (!room?.mediaId) {
+    const chooser = state.viewers.find((viewer) => viewer.browsing && viewer.id !== state.me?.id);
+    badge.textContent = chooser ? `${chooser.name} is choosing…` : 'Nothing playing';
+    badge.dataset.state = chooser ? 'drifting' : 'idle';
     return;
   }
-  const drift = Math.abs(currentPosition() - targetPosition());
-  if (drift > HARD_SEEK_THRESHOLD) {
-    dom.syncBadge.textContent = `${drift.toFixed(1)}s behind`;
-    dom.syncBadge.dataset.state = 'drifting';
-  } else {
-    dom.syncBadge.textContent = 'in sync';
-    dom.syncBadge.dataset.state = 'ok';
+  if (room.waitingFor) {
+    badge.textContent =
+      room.waitingFor === state.me?.id ? 'Loading…' : `Waiting for ${nameOf(room.waitingFor)}…`;
+    badge.dataset.state = 'drifting';
+    return;
   }
+  if (state.media && dom.video.readyState < 2) {
+    badge.textContent = 'Starting…';
+    badge.dataset.state = 'drifting';
+    return;
+  }
+  if (room.paused) {
+    badge.textContent = 'Paused';
+    badge.dataset.state = 'idle';
+    return;
+  }
+  if (state.media && Math.abs(currentPosition() - targetPosition()) > HARD_SEEK_THRESHOLD) {
+    badge.textContent = 'Catching up…';
+    badge.dataset.state = 'drifting';
+    return;
+  }
+  badge.textContent = 'Playing';
+  badge.dataset.state = 'ok';
 }
 
 // ---------------------------------------------------------------- render --
@@ -479,6 +508,28 @@ function canBrowse() {
   return state.role === 'host' || state.room?.libraryMode === 'shared';
 }
 
+function renderEmptyState() {
+  const others = state.viewers.filter((viewer) => viewer.id !== state.me?.id);
+  if (canBrowse()) {
+    dom.placeholderTitle.textContent = 'Nothing playing yet';
+    dom.placeholderText.textContent = 'Pick something to watch and it will start for both of you.';
+  } else {
+    const chooser = state.viewers.find((viewer) => viewer.browsing);
+    const host = state.viewers.find((viewer) => viewer.role === 'host');
+    dom.placeholderTitle.textContent = chooser
+      ? `${chooser.name} is choosing a film…`
+      : 'Waiting for the film to start';
+    dom.placeholderText.textContent = chooser
+      ? 'It will start here by itself the moment they pick one.'
+      : host
+        ? `${host.name} is picking something. It will start here by itself.`
+        : 'It will start here by itself as soon as they pick something.';
+  }
+  dom.placeholderHint.textContent = others.length
+    ? `${others.map((viewer) => viewer.name).join(' and ')} ${others.length === 1 ? 'is' : 'are'} here too.`
+    : 'Nobody else has joined yet.';
+}
+
 function renderPermissions() {
   const allowed = canBrowse();
   dom.btnLibrary.hidden = !allowed;
@@ -486,6 +537,11 @@ function renderPermissions() {
   // Stopping puts everyone back to the empty room, so it belongs to whoever
   // is allowed to choose what plays.
   dom.btnStop.hidden = !allowed || !state.room?.mediaId;
+  // The wording carries the state: there is nothing on, or you are swapping it.
+  dom.btnLibrary.querySelector('span').textContent = state.room?.mediaId
+    ? 'Change film'
+    : 'Choose a film';
+  dom.btnLibrary.classList.toggle('primary', !state.room?.mediaId);
   if (!allowed) closeLibrary();
 }
 
@@ -580,7 +636,9 @@ function renderPresence() {
     if (viewer.buffering) chip.textContent += ' · buffering';
     dom.presence.append(chip);
   }
-  dom.btnPanel.textContent = `Chat · ${state.viewers.length}`;
+  const others = state.viewers.filter((viewer) => viewer.id !== state.me?.id);
+  dom.panelLabel.textContent = others.length ? `Chat · ${others.length}` : 'Chat';
+  if (!state.room?.mediaId) renderEmptyState();
 }
 
 function appendChat(entry, { quiet = false } = {}) {
@@ -740,8 +798,13 @@ const openLibrary = () => {
   if (!canBrowse()) return;
   dom.librarySheet.hidden = false;
   dom.libraryFilter.focus();
+  send({ type: 'browsing', value: true });
 };
-const closeLibrary = () => { dom.librarySheet.hidden = true; };
+const closeLibrary = () => {
+  const wasOpen = !dom.librarySheet.hidden;
+  dom.librarySheet.hidden = true;
+  if (wasOpen) send({ type: 'browsing', value: false });
+};
 
 dom.btnLibrary.addEventListener('click', openLibrary);
 dom.placeholderBrowse.addEventListener('click', openLibrary);
