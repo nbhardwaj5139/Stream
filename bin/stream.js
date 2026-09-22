@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { createServer } from '../src/server.js';
 import { generatePasscode, generateToken } from '../src/auth.js';
 import { hasCloudflared, startTunnel, startNamedTunnel } from '../src/tunnel.js';
+import { describeProblem, resolveRoots } from '../src/roots.js';
 
 const CONFIG_PATH = path.join(os.homedir(), '.stream-room.json');
 
@@ -136,15 +137,22 @@ function localAddresses(port) {
 }
 
 const options = parseArgs(process.argv.slice(2));
-const roots = (options.dirs.length ? options.dirs : defaultDirectories()).map((dir) =>
-  path.resolve(dir.replace(/^~(?=$|[/\\])/, os.homedir()))
+const { roots, problems } = resolveRoots(
+  options.dirs.length ? options.dirs : defaultDirectories(),
+  { homedir: os.homedir(), stat: fs.statSync }
 );
 
-for (const root of roots) {
-  if (!fs.existsSync(root)) {
-    console.error(`Folder does not exist: ${root}`);
-    process.exit(1);
+if (problems.length) {
+  for (const problem of problems) console.error(describeProblem(problem));
+  if (problems.some((problem) => problem.reason === 'not-a-folder')) {
+    console.error('\nCheck the command — a stray argument usually means it was pasted twice.');
   }
+  process.exit(1);
+}
+
+if (roots.length === 0) {
+  console.error('No folder to share. Pass one, e.g. node bin/stream.js "D:\\Movies"');
+  process.exit(1);
 }
 
 const saved = options.newPasscodes ? {} : loadConfig();
