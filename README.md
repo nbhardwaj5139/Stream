@@ -58,6 +58,11 @@ cd Stream
 node bin/stream.js "D:\Movies"
 ```
 
+After the first run it remembers the folder and the address, so from then on
+you can just double-click `start.cmd` (or run `start.sh` on macOS/Linux). Both
+work from any directory — they find the project themselves, which `node
+bin/stream.js` cannot do if you are not already inside the folder.
+
 Keep your laptop awake and the terminal open. When you press Ctrl+C the link
 stops working.
 
@@ -73,6 +78,7 @@ week. Set your own with `--passcode`, or roll them with `--new-passcodes`.
     --passcode <code>     Set her passcode instead of generating one
     --host-passcode <code>  Set your own passcode
     --new-passcodes       Throw away the saved passcodes and make new ones
+                          (keeps the remembered folder and address)
     --host-only           Only you can play/pause/seek; she just watches
     --shared-library      Let her browse your files too (default: host only)
     --no-tunnel           Don't create a public link (same Wi-Fi only)
@@ -275,7 +281,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 80 unit and integration tests, no dependencies needed
+npm test          # 91 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright
@@ -285,7 +291,9 @@ node test/e2e/browser.mjs /path/to/a/folder/with/a/video
 
 | File | Does |
 |---|---|
+| `start.cmd` / `start.sh` | double-clickable launchers that work from anywhere |
 | `bin/stream.js` | CLI, passcode generation and persistence, tunnel startup |
+| `src/roots.js` | turning command-line arguments into folders to serve |
 | `bin/setup-tunnel.js` | one-time wiring of a permanent address on your domain |
 | `src/cloudflare.js` | tunnel discovery and cloudflared config generation |
 | `src/server.js` | HTTP routes, range streaming, WebSocket wiring |

@@ -34,6 +34,7 @@ Options
 
 Examples
   node bin/stream.js "D:\\Movies"
+  node bin/stream.js                       (repeats whatever you ran last time)
   node bin/stream.js -d "D:\\Movies" -d "E:\\Films" --passcode POPCORN
   node bin/stream.js "D:\\Movies" --tunnel-name movies --hostname movies.example.com
 `.trim();
@@ -137,6 +138,26 @@ function localAddresses(port) {
 }
 
 const options = parseArgs(process.argv.slice(2));
+const stored = loadConfig();
+const saved = options.newPasscodes ? { lastRun: stored.lastRun } : stored;
+const lastRun = saved.lastRun ?? {};
+
+// Nothing passed? Do what we did last time rather than guessing at ~/Videos.
+let reusing = false;
+if (options.dirs.length === 0 && Array.isArray(lastRun.dirs) && lastRun.dirs.length) {
+  options.dirs = lastRun.dirs;
+  reusing = true;
+}
+if (!options.hostname && lastRun.hostname) {
+  options.hostname = lastRun.hostname;
+  reusing = true;
+}
+if (!options.tunnelName && lastRun.tunnelName && options.tunnel) {
+  options.tunnelName = lastRun.tunnelName;
+  reusing = true;
+}
+if (options.port === 8420 && Number.isInteger(lastRun.port)) options.port = lastRun.port;
+
 const { roots, problems } = resolveRoots(
   options.dirs.length ? options.dirs : defaultDirectories(),
   { homedir: os.homedir(), stat: fs.statSync }
@@ -155,7 +176,6 @@ if (roots.length === 0) {
   process.exit(1);
 }
 
-const saved = options.newPasscodes ? {} : loadConfig();
 const hostPasscode = options.hostPasscode ?? saved.hostPasscode ?? generatePasscode();
 const guestPasscode = options.passcode ?? saved.guestPasscode ?? generatePasscode();
 const sessionSecret = saved.sessionSecret ?? generateToken(32);
@@ -165,7 +185,21 @@ if (hostPasscode === guestPasscode) {
   process.exit(1);
 }
 
-saveConfig({ hostPasscode, guestPasscode, sessionSecret });
+saveConfig({ hostPasscode, guestPasscode, sessionSecret, lastRun: saved.lastRun });
+
+if (reusing) console.log('Using the folder and address from last time.\n');
+
+saveConfig({
+  hostPasscode,
+  guestPasscode,
+  sessionSecret,
+  lastRun: {
+    dirs: roots,
+    port: options.port,
+    hostname: options.hostname ?? null,
+    tunnelName: options.tunnelName ?? null,
+  },
+});
 
 console.log('Scanning for video files...');
 const server = await createServer({
