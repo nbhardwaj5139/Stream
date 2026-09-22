@@ -86,28 +86,28 @@ A quick tunnel gets a new address on every restart. If you own a domain on
 Cloudflare, a **named tunnel** gives you one permanent address instead, so the
 link you sent her keeps working forever.
 
-One-time setup:
+One-time setup — this does all of it, and is safe to re-run:
 
 ```bash
-cloudflared tunnel login                 # opens a browser, pick your domain
-cloudflared tunnel create movies         # creates the tunnel and its credentials
+node bin/setup-tunnel.js movies.example.com
+```
+
+It logs you in (a browser opens; pick your domain), creates the tunnel, points
+the DNS record at it, and writes cloudflared's config file — backing up any
+config you already had. Every step is skipped if it's already done.
+
+If you'd rather do it by hand, it's these four:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create movies
 cloudflared tunnel route dns movies movies.example.com
+# then write ~/.cloudflared/config.yml (%USERPROFILE%\.cloudflared\config.yml
+# on Windows) with an ingress block for the hostname, and a
+# `- service: http_status:404` catch-all after it
 ```
 
-Then put the ingress in cloudflared's config (`%USERPROFILE%\.cloudflared\config.yml`
-on Windows, `~/.cloudflared/config.yml` elsewhere):
-
-```yaml
-tunnel: movies
-credentials-file: C:\Users\you\.cloudflared\<tunnel-id>.json
-
-ingress:
-  - hostname: movies.example.com
-    service: http://localhost:8420
-  - service: http_status:404
-```
-
-And run:
+Either way, then run:
 
 ```bash
 node bin/stream.js "D:\Movies" --tunnel-name movies --hostname movies.example.com
@@ -266,7 +266,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 69 unit and integration tests, no dependencies needed
+npm test          # 74 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright
@@ -277,6 +277,8 @@ node test/e2e/browser.mjs /path/to/a/folder/with/a/video
 | File | Does |
 |---|---|
 | `bin/stream.js` | CLI, passcode generation and persistence, tunnel startup |
+| `bin/setup-tunnel.js` | one-time wiring of a permanent address on your domain |
+| `src/cloudflare.js` | tunnel discovery and cloudflared config generation |
 | `src/server.js` | HTTP routes, range streaming, WebSocket wiring |
 | `src/auth.js` | passcode hashing, session cookies, brute-force limiting |
 | `src/room.js` | the shared playback clock — where the movie *should* be |

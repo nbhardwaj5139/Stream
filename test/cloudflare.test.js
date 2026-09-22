@@ -1,0 +1,77 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import {
+  backupExistingConfig,
+  buildConfigYaml,
+  findTunnel,
+  isValidHostname,
+  isValidTunnelName,
+} from '../src/cloudflare.js';
+
+test('hostnames are checked before they reach cloudflared', () => {
+  assert.equal(isValidHostname('movies.example.com'), true);
+  assert.equal(isValidHostname('movies.nbhardwaj.ca'), true);
+  assert.equal(isValidHostname('a.b.c.example.co.uk'), true);
+
+  assert.equal(isValidHostname('movies'), false, 'a bare label is not routable');
+  assert.equal(isValidHostname('https://movies.example.com'), false, 'scheme must be stripped first');
+  assert.equal(isValidHostname('movies.example.com/path'), false);
+  assert.equal(isValidHostname('-bad.example.com'), false);
+  assert.equal(isValidHostname(''), false);
+  assert.equal(isValidHostname(undefined), false);
+});
+
+test('tunnel names reject anything that would need quoting', () => {
+  assert.equal(isValidTunnelName('movies'), true);
+  assert.equal(isValidTunnelName('movie-night_2'), true);
+  assert.equal(isValidTunnelName('-leading'), false);
+  assert.equal(isValidTunnelName('has space'), false);
+  assert.equal(isValidTunnelName('semi;colon'), false);
+  assert.equal(isValidTunnelName(''), false);
+});
+
+test('the generated config routes only our hostname and 404s the rest', () => {
+  const yaml = buildConfigYaml({
+    tunnelName: 'movies',
+    tunnelId: '11111111-2222-3333-4444-555555555555',
+    hostname: 'movies.example.com',
+    port: 8420,
+  });
+
+  assert.match(yaml, /^tunnel: movies$/m);
+  assert.match(yaml, /credentials-file: .*11111111-2222-3333-4444-555555555555\.json/);
+  assert.match(yaml, /- hostname: movies\.example\.com/);
+  assert.match(yaml, /service: http:\/\/localhost:8420/);
+  // The catch-all matters: without it any hostname pointed at the tunnel
+  // would reach the app.
+  assert.match(yaml, /- service: http_status:404/);
+  assert.ok(yaml.indexOf('hostname: movies.example.com') < yaml.indexOf('http_status:404'));
+});
+
+test('finding a tunnel by name in cloudflared output', () => {
+  const tunnels = [
+    { id: 'aaa', name: 'other' },
+    { id: 'bbb', name: 'movies' },
+  ];
+  assert.equal(findTunnel(tunnels, 'movies').id, 'bbb');
+  assert.equal(findTunnel(tunnels, 'missing'), null);
+  assert.equal(findTunnel([], 'movies'), null);
+});
+
+test('an existing config is backed up before being overwritten', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-'));
+  const target = path.join(dir, 'config.yml');
+
+  assert.equal(backupExistingConfig(target), null, 'nothing to back up yet');
+
+  fs.writeFileSync(target, 'tunnel: something-i-already-had\n');
+  const backup = backupExistingConfig(target);
+  assert.ok(backup, 'a backup path is returned');
+  assert.equal(fs.readFileSync(backup, 'utf8'), 'tunnel: something-i-already-had\n');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
