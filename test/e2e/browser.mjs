@@ -30,6 +30,14 @@ async function until(predicate, { timeout = 10_000, interval = 150 } = {}) {
   return false;
 }
 
+// Clicking the chat button toggles; earlier checks may already have opened it.
+async function openPanel(page) {
+  if ((await page.getAttribute('#app', 'data-panel')) !== 'open') await page.click('#btn-panel');
+}
+async function closePanel(page) {
+  if ((await page.getAttribute('#app', 'data-panel')) === 'open') await page.click('#btn-panel');
+}
+
 const videoState = (page) =>
   page.evaluate(() => {
     const video = document.getElementById('video');
@@ -141,7 +149,7 @@ try {
   check('the guest has decodable video', ready, `readyState ${(await videoState(guest)).readyState}`);
 
   // --- play ---------------------------------------------------------------
-  await host.evaluate(() => document.getElementById('video').play());
+  await host.evaluate(() => document.getElementById('video').play().catch(() => {}));
   const bothPlaying = await until(async () => {
     const [h, g] = await Promise.all([videoState(host), videoState(guest)]);
     return !h.paused && !g.paused;
@@ -256,7 +264,7 @@ try {
   await host.click('#btn-library');
   await host.click('#library-list button');
   await until(async () => (await videoState(guest)).src !== null);
-  await host.evaluate(() => document.getElementById('video').play());
+  await host.evaluate(() => document.getElementById('video').play().catch(() => {}));
   const playing = await until(async () => (await host.textContent('#sync-badge')) === 'Playing');
   check('a playing room says "Playing"', playing, await host.textContent('#sync-badge'));
 
@@ -290,6 +298,25 @@ try {
   check('and turns the sound on when pressed', audible.muted === 'false' && !audible.videoMuted, JSON.stringify(audible));
   check('then says the sound is on', /sound on/i.test(audible.label), audible.label);
 
+
+  // --- the connection test -------------------------------------------------
+  // The thing you want to know days before, not on the night.
+  await openPanel(guest);
+  check('there is a way to test the connection', await guest.isVisible('#btn-test'));
+
+  await guest.click('#btn-test');
+  const tested = await until(async () => {
+    const toastEl = await guest.evaluate(() => {
+      const node = document.getElementById('toast');
+      return node.hidden ? null : node.textContent;
+    });
+    return toastEl && /connected|could not reach|no answer/i.test(toastEl);
+  }, { timeout: 25_000 });
+
+  const verdict = await guest.evaluate(() => document.getElementById('toast').textContent);
+  check('it reports a verdict', tested, verdict);
+  check('and the two browsers do connect', /connected/i.test(verdict ?? ''), verdict);
+  await closePanel(guest);
 
   // --- screen sharing ------------------------------------------------------
   check('only the host is offered screen sharing', await host.isVisible('#btn-share'));

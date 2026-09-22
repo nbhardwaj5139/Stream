@@ -149,3 +149,96 @@ test('the share profile matches resolution to a sendable bitrate', async () => {
     );
   }
 });
+
+test('a dropped viewer is offered the stream again, with backoff', async (t) => {
+  const { ScreenShare } = await import('../public/screen.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  const offered = [];
+  const states = [];
+  const share = new ScreenShare({
+    send: () => {},
+    onStream: () => {},
+    onStateChange: (id, value) => states.push(value),
+  });
+  share.stream = { getTracks: () => [] }; // stand in for a live capture
+  share.offerTo = async (id) => { offered.push(id); };
+
+  share._scheduleReconnect('viewer-1', 0);
+  assert.deepEqual(offered, [], 'not immediately — the network needs a moment');
+  assert.ok(states.includes('reconnecting'), 'and the room is told');
+
+  t.mock.timers.tick(1000);
+  await Promise.resolve();
+  assert.deepEqual(offered, ['viewer-1'], 'first retry after a second');
+
+  // Each further failure waits longer: 2s, then 4s.
+  share._scheduleReconnect('viewer-1', 0);
+  t.mock.timers.tick(1999);
+  await Promise.resolve();
+  assert.equal(offered.length, 1, 'still waiting');
+  t.mock.timers.tick(1);
+  await Promise.resolve();
+  assert.equal(offered.length, 2);
+
+  t.mock.timers.reset();
+});
+
+test('reconnection gives up rather than retrying forever', async (t) => {
+  const { ScreenShare } = await import('../public/screen.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  const states = [];
+  const share = new ScreenShare({
+    send: () => {},
+    onStream: () => {},
+    onStateChange: (id, value) => states.push(value),
+  });
+  share.stream = { getTracks: () => [] };
+  share.offerTo = async () => {};
+
+  // Well past the cap.
+  for (let i = 0; i < 12; i++) {
+    share._scheduleReconnect('viewer-1', 0);
+    t.mock.timers.tick(20_000);
+  }
+
+  assert.ok(states.includes('gave-up'), 'it says so instead of trying silently');
+  t.mock.timers.reset();
+});
+
+test('only the side holding the picture tries to reconnect', async (t) => {
+  const { ScreenShare } = await import('../public/screen.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  const states = [];
+  const viewer = new ScreenShare({
+    send: () => {},
+    onStream: () => {},
+    onStateChange: (id, value) => states.push(value),
+  });
+  // No stream: this is somebody watching, not sharing.
+  viewer._scheduleReconnect('host-1', 0);
+  t.mock.timers.tick(30_000);
+
+  assert.deepEqual(states, [], 'a viewer waits to be re-offered rather than offering');
+  t.mock.timers.reset();
+});
+
+test('a recovered connection stops the retrying and forgets the attempts', async (t) => {
+  const { ScreenShare } = await import('../public/screen.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  const offered = [];
+  const share = new ScreenShare({ send: () => {}, onStream: () => {}, onStateChange: () => {} });
+  share.stream = { getTracks: () => [] };
+  share.offerTo = async (id) => { offered.push(id); };
+  share.peers.set('viewer-1', { connectionState: 'connected', close: () => {} });
+
+  share._scheduleReconnect('viewer-1', 0);
+  t.mock.timers.tick(5000);
+  await Promise.resolve();
+
+  assert.deepEqual(offered, [], 'it mended itself while we waited');
+  t.mock.timers.reset();
+});

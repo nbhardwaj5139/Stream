@@ -262,10 +262,22 @@ What it costs:
   ```
 
   Any TURN service works; several offer a free tier that is ample for two
-  people. If a share fails to connect, the room says whether a relay is
-  configured, so you can tell this cause apart from the others. File streaming
-  is plain HTTPS through the tunnel and never has this problem — which is the
-  main reason to keep it.
+  people. File streaming is plain HTTPS through the tunnel and never has this
+  problem — which is the main reason to keep it.
+
+  **Find out before it matters.** Open the chat panel and press **Test link**.
+  It opens the same kind of connection a share would need, carrying a few bytes
+  instead of a film, and says what happened: connected directly, connected
+  through a relay, or could not connect — in which case a relay is what you
+  need. Both sides have the button, and it takes a few seconds. Far better on a
+  Tuesday than with someone waiting.
+
+- **A connection that drops is offered again.** Films are long and networks are
+  not perfect. A failed peer connection is re-offered with backoff — a second,
+  then two, then four, up to about a minute of trying — and the room says
+  "Connection dropped — reconnecting…" while it does. Only the side holding the
+  picture retries; the other waits to be offered. After eight attempts it stops
+  and says so rather than retrying into the void.
 
 Playback controls do nothing during a share, because a live stream has nothing
 to seek. Picking a film from the library ends the share by itself, and the room
@@ -389,7 +401,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 131 unit and integration tests, no dependencies needed
+npm test          # 135 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright
@@ -413,4 +425,5 @@ node test/e2e/browser.mjs /path/to/a/folder/with/a/video
 | `src/hls.js` | HLS segmenting, for Safari and anything else fussy |
 | `src/subtitles.js` | SRT/ASS → WebVTT |
 | `public/app.js` | the player, drift correction, chat |
-| `public/screen.js` | WebRTC screen sharing and its audio negotiation |
+| `public/screen.js` | WebRTC screen sharing, audio negotiation, reconnection |
+| `public/probe.js` | the connection test, and what it means |

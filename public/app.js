@@ -1,5 +1,6 @@
 // Client: keeps this browser's <video> lined up with the room's shared clock.
 import { ScreenShare } from './screen.js';
+import { ConnectionProbe, describeProbeResult } from './probe.js';
 
 const HARD_SEEK_THRESHOLD = 1.5;   // seconds out before we jump
 const SOFT_NUDGE_THRESHOLD = 0.25; // seconds out before we speed up/slow down
@@ -37,6 +38,7 @@ const dom = {
   panelLabel: el('panel-label'),
   btnPanelClose: el('btn-panel-close'),
   btnLeave: el('btn-leave'),
+  btnTest: el('btn-test'),
   presence: el('presence'),
   chat: el('chat'),
   composer: el('composer'),
@@ -229,6 +231,10 @@ function handleMessage(message) {
       state.library = message.library ?? [];
       state.capabilities = message.capabilities ?? {};
       screenShare.setIceServers(state.capabilities.iceServers ?? []);
+      probe.setIceServers([
+        { urls: 'stun:stun.l.google.com:19302' },
+        ...(state.capabilities.iceServers ?? []),
+      ]);
       if (state.capabilities.shareHeight) screenShare.setShareHeight(state.capabilities.shareHeight);
       dom.btnRescan.hidden = state.role !== 'host';
       // Both sides use the same link, so say plainly which passcode got you in.
@@ -274,9 +280,13 @@ function handleMessage(message) {
     }
 
     case 'signal':
-      screenShare.handleSignal(message).catch(() => {
-        showOverlay('Could not connect to their screen.');
-      });
+      if (message.data?.kind === 'probe') {
+        probe.handleSignal(message).catch(() => {});
+      } else {
+        screenShare.handleSignal(message).catch(() => {
+          showOverlay('Could not connect to their screen.');
+        });
+      }
       break;
 
     case 'chat':
@@ -1150,6 +1160,22 @@ const screenShare = new ScreenShare({
     playVideo();
   },
   onStateChange: (id, connectionState) => {
+    if (connectionState === 'reconnecting') {
+      const message = 'Connection dropped — reconnecting…';
+      if (screenShare.sharing) toast(message, 4000);
+      else showOverlay(message);
+      return;
+    }
+    if (connectionState === 'connected') {
+      if (!screenShare.sharing) hideOverlay();
+      return;
+    }
+    if (connectionState === 'gave-up') {
+      const message = 'Could not get the connection back. Stop sharing and start again.';
+      if (screenShare.sharing) toast(message, 12_000);
+      else showOverlay(message);
+      return;
+    }
     if (connectionState !== 'failed') return;
     // Almost always a network that will not allow a direct connection.
     const message = state.capabilities.iceServers?.length
@@ -1165,6 +1191,32 @@ const screenShare = new ScreenShare({
   },
 });
 state.screen = screenShare;
+
+// The same connection a share would need, carrying nothing, so it can be
+// checked on a Tuesday rather than discovered on the night.
+const probe = new ConnectionProbe({ send: (message) => send(message) });
+
+dom.btnTest.addEventListener('click', async () => {
+  const others = state.viewers.filter((viewer) => viewer.id !== state.me?.id);
+  if (others.length === 0) {
+    toast('Nobody else is here to test against — ask them to open the link first.', 7000);
+    return;
+  }
+
+  dom.btnTest.disabled = true;
+  dom.btnTest.textContent = 'Testing…';
+  try {
+    for (const viewer of others) {
+      const result = await probe.test(viewer.id);
+      toast(describeProbeResult(result, { name: viewer.name }), 14_000);
+    }
+  } catch {
+    toast('The test could not run. Are they still on the page?', 8000);
+  } finally {
+    dom.btnTest.disabled = false;
+    dom.btnTest.textContent = 'Test link';
+  }
+});
 
 async function startSharing() {
   let started;

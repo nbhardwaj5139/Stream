@@ -9,6 +9,10 @@
 // routers will accept an incoming connection. When one will not — some mobile
 // carriers, some office networks — nothing connects without a TURN relay to
 // pass the media through, which is what `extraIceServers` is for.
+// Eight tries spans about a minute of backoff, which covers a router
+// restarting without pestering a network that is genuinely gone.
+const MAX_RECONNECT_ATTEMPTS = 8;
+
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
@@ -98,6 +102,9 @@ export class ScreenShare {
     this.onEnded = onEnded ?? (() => {});
     this.peers = new Map();
     this.stream = null;
+    // Reconnection bookkeeping, per viewer.
+    this.attempts = new Map();
+    this.retries = new Map();
   }
 
   get sharing() {
@@ -160,11 +167,48 @@ export class ScreenShare {
   }
 
   closeAll() {
+    for (const timer of this.retries.values()) clearTimeout(timer);
+    this.retries.clear();
+    this.attempts.clear();
     for (const peer of this.peers.values()) peer.close();
     this.peers.clear();
   }
 
+  // A film runs for two hours; a connection that drops once in that time is
+  // ordinary. Offer again rather than ending the evening, backing off so a
+  // network that is properly down is not hammered.
+  _scheduleReconnect(id, delay) {
+    if (!this.stream) return; // only the side with the picture can re-offer
+    if (this.retries.has(id)) return;
+
+    const attempt = (this.attempts.get(id) ?? 0) + 1;
+    if (attempt > MAX_RECONNECT_ATTEMPTS) {
+      this.onStateChange(id, 'gave-up');
+      return;
+    }
+    this.attempts.set(id, attempt);
+
+    const wait = delay || Math.min(1000 * 2 ** (attempt - 1), 15_000);
+    this.onStateChange(id, 'reconnecting');
+
+    this.retries.set(
+      id,
+      setTimeout(() => {
+        this.retries.delete(id);
+        const peer = this.peers.get(id);
+        // It may have mended itself while we waited.
+        if (peer?.connectionState === 'connected') {
+          this.attempts.delete(id);
+          return;
+        }
+        this.offerTo(id).catch(() => this._scheduleReconnect(id, 0));
+      }, wait)
+    );
+  }
+
   close(id) {
+    clearTimeout(this.retries.get(id));
+    this.retries.delete(id);
     this.peers.get(id)?.close();
     this.peers.delete(id);
   }
@@ -203,9 +247,19 @@ export class ScreenShare {
 
     peer.addEventListener('connectionstatechange', () => {
       this.onStateChange(id, peer.connectionState);
-      if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
-        this.peers.delete(id);
+
+      if (peer.connectionState === 'connected') {
+        this.attempts.delete(id);
+        clearTimeout(this.retries.get(id));
+        this.retries.delete(id);
+        return;
       }
+
+      // 'disconnected' often mends itself within a few seconds — a phone
+      // changing tower, a router pausing for breath. 'failed' will not.
+      if (peer.connectionState === 'failed') this._scheduleReconnect(id, 0);
+      else if (peer.connectionState === 'disconnected') this._scheduleReconnect(id, 5000);
+      else if (peer.connectionState === 'closed') this.peers.delete(id);
     });
 
     peer.addEventListener('track', (event) => {
@@ -247,6 +301,7 @@ export class ScreenShare {
 
   // Either side: handle something the other one sent.
   async handleSignal({ from, data }) {
+    if (data.kind === 'probe') return; // handled by ConnectionProbe
     let peer = this.peers.get(from);
 
     if (data.sdp) {
