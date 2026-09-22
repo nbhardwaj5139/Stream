@@ -66,9 +66,9 @@ bin/stream.js` cannot do if you are not already inside the folder.
 Keep your laptop awake and the terminal open. When you press Ctrl+C the link
 stops working.
 
-Passcodes are generated once and saved to `~/.stream-room.json`, so they stay
-the same every time you start it — you don't have to text her a new one each
-week. Set your own with `--passcode`, or roll them with `--new-passcodes`.
+New passcodes are generated every time you start it, so last week's code stops
+working when the evening ends. Pass `--keep-passcodes` to reuse the previous
+set, or `--passcode` / `--host-passcode` to pin your own.
 
 ## Options
 
@@ -77,8 +77,7 @@ week. Set your own with `--passcode`, or roll them with `--new-passcodes`.
 -p, --port <number>       Port to listen on (default 8420)
     --passcode <code>     Set her passcode instead of generating one
     --host-passcode <code>  Set your own passcode
-    --new-passcodes       Throw away the saved passcodes and make new ones
-                          (keeps the remembered folder and address)
+    --keep-passcodes      Reuse last session's passcodes instead of new ones
     --host-only           Only you can play/pause/seek; she just watches
     --shared-library      Let her browse your files too (default: host only)
     --no-tunnel           Don't create a public link (same Wi-Fi only)
@@ -262,6 +261,8 @@ Keyboard: <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> jump 10s 
 The passcode is the credential. Anyone who has the link *and* the passcode can
 browse and watch the folders you shared.
 
+- Passcodes are new for every session by default, so a code that leaks is only
+  good until you restart.
 - Passcodes are hashed with scrypt and compared in constant time.
 - Wrong guesses are rate limited per address, with a global cap so the guessing
   can't just be spread across many addresses. Five wrong tries locks that

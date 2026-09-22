@@ -47,7 +47,7 @@ function parseArgs(argv) {
     port: Number(process.env.PORT) || 8420,
     passcode: null,
     hostPasscode: null,
-    newPasscodes: false,
+    keepPasscodes: false,
     hostname: null,
     tunnelName: null,
     controlMode: 'everyone',
@@ -69,7 +69,8 @@ function parseArgs(argv) {
       case '-p': case '--port': options.port = Number(argv[++i]); break;
       case '--passcode': options.passcode = argv[++i]; break;
       case '--host-passcode': options.hostPasscode = argv[++i]; break;
-      case '--new-passcodes': options.newPasscodes = true; break;
+      case '--keep-passcodes': options.keepPasscodes = true; break;
+      case '--new-passcodes': break; // now the default; kept so old commands work
       case '--hostname': options.hostname = argv[++i]; break;
       case '--tunnel-name': options.tunnelName = argv[++i]; break;
       case '--host-only': options.controlMode = 'host'; break;
@@ -141,7 +142,9 @@ function localAddresses(port) {
 
 const options = parseArgs(process.argv.slice(2));
 const stored = loadConfig();
-const saved = options.newPasscodes ? { lastRun: stored.lastRun } : stored;
+// Fresh passcodes every session by default: a code that stops working when the
+// evening ends is worth more than one nobody has to be told twice.
+const saved = options.keepPasscodes ? stored : { lastRun: stored.lastRun };
 const lastRun = saved.lastRun ?? {};
 
 // Nothing passed? Do what we did last time rather than guessing at ~/Videos.
@@ -326,7 +329,11 @@ console.log(
     ? 'Library: she can browse your files too.'
     : 'Library: only you can see the file list; she sees only what is playing.'
 );
-console.log(`Passcodes are saved in ${CONFIG_PATH} and reused next time.`);
+console.log(
+  options.keepPasscodes
+    ? `Passcodes are the saved ones, from ${CONFIG_PATH}.`
+    : 'These passcodes are new for this session. Use --keep-passcodes to reuse the last set.'
+);
 if (hostname && !options.tunnelName && options.tunnel) {
   console.log(
     `\nUsing ${base} as the address. If you run cloudflared yourself\n` +
