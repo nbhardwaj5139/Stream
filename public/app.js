@@ -1070,11 +1070,12 @@ async function startSharing() {
   }
 
   if (!started.hasAudio) {
+    // Windows offers audio on "Entire Screen" and on a Chrome tab, but never
+    // on a single window — which is the option people reach for first.
     toast(
-      started.audioUnavailable
-        ? 'Sharing without sound — this machine would not hand over its audio.'
-        : 'No sound was captured — tick "Share system audio" in the picker next time.',
-      7000
+      'Sharing without sound. Stop, share again, choose "Entire Screen" and ' +
+        'tick "Share system audio" — a single window cannot carry audio.',
+      10_000
     );
   }
 
@@ -1099,9 +1100,12 @@ dom.btnShare.addEventListener('click', () => {
   if (screenShare.sharing) {
     screenShare.stop();
     control('source', { source: 'file' });
-  } else {
-    startSharing();
+    return;
   }
+  // The picker covers anything shown now, so leave the advice on screen for
+  // after it closes as well.
+  toast('Choose "Entire Screen" and tick "Share system audio" for sound.', 12_000);
+  startSharing();
 });
 
 // --------------------------------------------------------------- the gate --

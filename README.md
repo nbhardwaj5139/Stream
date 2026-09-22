@@ -216,10 +216,13 @@ What it costs:
   the file, and dark scenes band. It is capped at 1080p — your screen is the
   source, and a phone cannot show more anyway.
 - **Your laptop encodes continuously** while it runs.
-- **Sound needs to be captured too.** Tick "Share system audio" or "Share tab
-  audio" in the picker; the room will tell you if nothing came through. On
-  Windows this works directly. If the machine refuses audio, the share
-  continues without it rather than failing.
+- **Sound needs the right option in the picker.** On Windows, Chrome offers
+  audio for **Entire Screen** and for a **Chrome Tab**, and never for a single
+  window — which is the option most people try first, because it is the one
+  that names the app they are playing. To share a film from VLC you want
+  *Entire Screen* with "Share system audio" ticked. The room says so before the
+  picker opens and again if nothing came through, and if the machine refuses
+  audio entirely the share continues without it rather than failing.
 - **It needs a direct connection.** Public STUN servers are used and no relay,
   so a strict corporate network can block it where plain HTTPS would not.
 
