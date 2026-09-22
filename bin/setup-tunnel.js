@@ -32,10 +32,12 @@ const USAGE = `
 Usage
   node bin/setup-tunnel.js <hostname> [--name <tunnel>] [--port <number>]
   node bin/setup-tunnel.js --check <hostname> [--name <tunnel>] [--port <number>]
+  node bin/setup-tunnel.js <hostname> --for-someone-else [--out <folder>]
 
 Examples
   node bin/setup-tunnel.js movies.example.com
   node bin/setup-tunnel.js --check movies.example.com
+  node bin/setup-tunnel.js friend.example.com --for-someone-else
 `.trim();
 
 function fail(message) {
@@ -64,11 +66,15 @@ let hostname = null;
 let tunnelName = null;
 let port = 8420;
 let checkOnly = false;
+let forSomeoneElse = false;
+let outDir = null;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--name') tunnelName = args[++i];
   else if (args[i] === '--port') port = Number(args[++i]);
   else if (args[i] === '--check') checkOnly = true;
+  else if (args[i] === '--for-someone-else') forSomeoneElse = true;
+  else if (args[i] === '--out') outDir = args[++i];
   else if (!args[i].startsWith('-')) hostname = args[i];
 }
 
@@ -182,7 +188,11 @@ if (checkOnly) {
   process.exit(0);
 }
 
-console.log(`Setting up ${hostname} -> http://localhost:${port}\n`);
+console.log(
+  forSomeoneElse
+    ? `Preparing ${hostname} for somebody else's machine\n`
+    : `Setting up ${hostname} -> http://localhost:${port}\n`
+);
 
 // 1. Authorise this machine against the account that owns the domain.
 if (isLoggedIn()) {
@@ -261,7 +271,67 @@ if (!routeResult.ok) {
   }
 }
 
-// 4. Write the config cloudflared reads on startup.
+// 4. Write the config — theirs to take away, or ours to run.
+if (forSomeoneElse) {
+  // A bundle they can copy to their own machine. The credentials file
+  // authorises this one tunnel and nothing else on the account, so handing it
+  // over does not hand over the domain.
+  const bundle = path.resolve(outDir ?? `share-${tunnelName}`);
+  fs.mkdirSync(bundle, { recursive: true });
+
+  const credentialsName = `${tunnel.id}.json`;
+  fs.copyFileSync(credentials, path.join(bundle, credentialsName));
+
+  // Point the config at the copy as it will sit on their machine, beside it.
+  fs.writeFileSync(
+    path.join(bundle, 'config.yml'),
+    buildConfigYaml({ tunnelName, tunnelId: tunnel.id, hostname, port })
+      .replace(credentials, `./${credentialsName}`)
+  );
+
+  fs.writeFileSync(
+    path.join(bundle, 'READ-ME-FIRST.txt'),
+    [
+      `Your address: https://${hostname}`,
+      '',
+      'One-time setup on your machine:',
+      '',
+      '  1. Install Node and cloudflared:',
+      '       winget install OpenJS.NodeJS.LTS',
+      '       winget install Cloudflare.cloudflared',
+      '',
+      '  2. Get the app:',
+      '       git clone <repository url>',
+      '       cd Stream',
+      '',
+      '  3. Copy both files from this folder into the Stream folder.',
+      '',
+      'Every time you want to watch:',
+      '',
+      '  Window 1:  cloudflared tunnel --config config.yml run',
+      `  Window 2:  node bin/stream.js "C:\\path\\to\\your\\films" --no-tunnel --hostname ${hostname}`,
+      '',
+      'Then send whoever you are watching with the address above and the guest',
+      'passcode the second window prints. The passcode changes every time you',
+      'start it.',
+      '',
+      `The .json file is the key to this one address. It cannot reach anything`,
+      'else on the domain, but keep it to yourself all the same.',
+      '',
+    ].join('\n')
+  );
+
+  console.log(`4/4  Wrote a bundle for them: ${bundle}`);
+  console.log('');
+  console.log(`Done. Send them the whole "${path.basename(bundle)}" folder.`);
+  console.log(`It contains the key to ${hostname} and instructions.`);
+  console.log('');
+  console.log(`Your own setup is untouched. Revoke theirs any time with:`);
+  console.log(`  cloudflared tunnel delete ${tunnelName}`);
+  console.log('');
+  process.exit(0);
+}
+
 const target = configPath();
 const backup = backupExistingConfig(target);
 if (backup) console.log(`4/4  Saved your previous config to ${backup}`);

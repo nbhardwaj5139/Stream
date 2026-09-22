@@ -134,6 +134,30 @@ node bin/stream.js "D:\Movies" --hostname movies.example.com --no-tunnel
 Either way your laptop still has to be awake and running the server — Cloudflare
 is a front door, not a host.
 
+### Giving someone a subdomain of yours
+
+A friend can run their own room on your domain without touching your Cloudflare
+account:
+
+```bash
+node bin/setup-tunnel.js friend.example.com --for-someone-else
+```
+
+That creates the tunnel and the DNS record on your account, then writes a
+folder holding the tunnel's credentials, a matching config, and instructions.
+Send them the folder.
+
+The credentials authorise **that one tunnel** and nothing else — they cannot
+reach your other records, your other tunnels, or your account, and
+`cloudflared tunnel delete friend` revokes it. They can point it at anything on
+their own machine, though, so the hostname is theirs to use as they like: a
+question of trust rather than of permissions.
+
+Their room is entirely separate from yours — own server, own passcodes, own
+guests. If they would rather not depend on your domain at all, running
+`node bin/stream.js` with no tunnel options gives them a free throwaway address
+and needs nothing from you.
+
 **Watch on the host machine using `http://localhost:8420`, not your domain.**
 Going through the tunnel sends the film out to Cloudflare and straight back,
 so your upload carries it twice and both of you stutter. The local address
