@@ -182,7 +182,7 @@ where it actually is against where it should be:
 - **over 1.5s out** — seek. Something real happened (a stall, a tab that slept).
 
 When either side starts buffering, the room pauses for everyone and shows
-*"Waiting for Priya to buffer…"*. When she recovers, it resumes. Nobody has to
+*"Waiting for Sam to buffer…"*. When she recovers, it resumes. Nobody has to
 say "wait, go back" — that's `--no-auto-pause` if you'd rather it didn't.
 
 ## Quality, and what 4K actually costs

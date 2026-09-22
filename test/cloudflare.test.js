@@ -18,7 +18,7 @@ import {
 
 test('hostnames are checked before they reach cloudflared', () => {
   assert.equal(isValidHostname('movies.example.com'), true);
-  assert.equal(isValidHostname('movies.nbhardwaj.ca'), true);
+  assert.equal(isValidHostname('films.example.org'), true);
   assert.equal(isValidHostname('a.b.c.example.co.uk'), true);
 
   assert.equal(isValidHostname('movies'), false, 'a bare label is not routable');
@@ -150,14 +150,14 @@ test('the hostnames cloudflared is configured to serve are read back', () => {
   const yaml = buildConfigYaml({
     tunnelName: 'movies',
     tunnelId: '11111111-2222-3333-4444-555555555555',
-    hostname: 'movies.nbhardwaj.ca',
+    hostname: 'movies.example.com',
     port: 8420,
   });
 
   // The config is the truth about what the tunnel answers for; a --hostname
   // that disagrees would print a link that cannot work.
-  assert.deepEqual(parseIngressHostnames(yaml), ['movies.nbhardwaj.ca']);
-  assert.ok(!parseIngressHostnames(yaml).includes('movies.nbhardwaj.cacd'));
+  assert.deepEqual(parseIngressHostnames(yaml), ['movies.example.com']);
+  assert.ok(!parseIngressHostnames(yaml).includes('movies.example.comcd'));
 });
 
 test('ingress parsing copes with quotes, comments and several hostnames', () => {

@@ -90,13 +90,13 @@ test('the room heading can be set, and is escaped', async () => {
     roots: [mediaRoot],
     hostPasscode: HOST_PASSCODE,
     guestPasscode: GUEST_PASSCODE,
-    roomName: 'Nick & Priya <3',
+    roomName: 'Sam & Alex <3',
   });
   await new Promise((resolve) => named.listen(0, '127.0.0.1', resolve));
   const html = await (await fetch(`http://127.0.0.1:${named.address().port}/`)).text();
 
-  assert.match(html, /Nick &amp; Priya &lt;3/);
-  assert.doesNotMatch(html, /Nick & Priya <3/, 'the name must not be injected raw');
+  assert.match(html, /Sam &amp; Alex &lt;3/);
+  assert.doesNotMatch(html, /Sam & Alex <3/, 'the name must not be injected raw');
   assert.doesNotMatch(html, /\{\{ROOM_NAME\}\}/, 'the placeholder is filled in');
 
   await new Promise((resolve) => named.close(resolve));

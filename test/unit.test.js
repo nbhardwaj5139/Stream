@@ -144,8 +144,8 @@ test('the room stays paused while a second viewer is still stalled', () => {
 
 test('chat trims, caps and attributes messages', () => {
   const room = new Room();
-  const viewer = room.addViewer({ role: 'guest', name: '  Priya  ' });
-  assert.equal(viewer.name, 'Priya');
+  const viewer = room.addViewer({ role: 'guest', name: '  Sam  ' });
+  assert.equal(viewer.name, 'Sam');
   assert.equal(room.addChat(viewer, '   '), null);
   assert.equal(room.addChat(viewer, '  hello   world  ').text, 'hello world');
   assert.equal(room.addChat(viewer, 'x'.repeat(2000)).text.length, 800);
@@ -309,11 +309,11 @@ test('generated passcodes avoid letters people confuse', () => {
 
 test('session tokens survive a round trip and reject tampering', () => {
   const secret = 'a-test-secret';
-  const token = signSession(secret, { role: 'guest', name: 'Priya', expiresAt: Date.now() + 10_000 });
+  const token = signSession(secret, { role: 'guest', name: 'Sam', expiresAt: Date.now() + 10_000 });
 
   const payload = verifySession(secret, token);
   assert.equal(payload.role, 'guest');
-  assert.equal(payload.name, 'Priya');
+  assert.equal(payload.name, 'Sam');
 
   assert.equal(verifySession('another-secret', token), null, 'signed with a different key');
   assert.equal(verifySession(secret, token.slice(0, -2) + 'xx'), null, 'signature edited');
