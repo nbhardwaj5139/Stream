@@ -152,6 +152,29 @@ try {
   await wait(1500);
   check('paused means paused', Math.abs((await videoState(host)).time - before) < 0.3);
 
+  // --- pause stays paused --------------------------------------------------
+  // A viewer recovering from a stall used to resume the film even though
+  // someone had deliberately paused it.
+  await guest.evaluate(() => {
+    const video = document.getElementById('video');
+    video.dispatchEvent(new Event('waiting'));
+  });
+  await wait(2600);
+  const stillPaused = await videoState(host);
+  check('a deliberate pause survives a buffering report', stillPaused.paused);
+
+  // --- stopping ------------------------------------------------------------
+  check('the host has a stop button while something is playing', await host.isVisible('#btn-stop'));
+  check('the guest does not', !(await guest.isVisible('#btn-stop')));
+
+  await host.click('#btn-stop');
+  const cleared = await until(async () => await guest.isVisible('#placeholder'));
+  check('stopping returns both sides to the empty room', cleared);
+  // The host processes its own broadcast independently, so wait for it rather
+  // than assuming it landed in the same instant as the guest's.
+  const hidden = await until(async () => !(await host.isVisible('#btn-stop')));
+  check('the stop button hides once nothing is playing', hidden);
+
   // --- chat ---------------------------------------------------------------
   await guest.click('#btn-panel');
   await guest.fill('#chat-input', 'this is the good bit');
@@ -166,6 +189,28 @@ try {
   // --- presence -----------------------------------------------------------
   const presence = await host.$eval('#presence', (node) => node.textContent);
   check('both viewers show in presence', /Host/.test(presence) && /Guest/.test(presence), presence);
+
+  check('the host is told they are the host', (await host.textContent('#role-badge')) === 'Host');
+  check('the guest is told they are a guest', (await guest.textContent('#role-badge')) === 'Guest');
+
+  // --- installable, and the manifest actually parses -----------------------
+  const manifest = await host.evaluate(async () => {
+    const link = document.querySelector('link[rel="manifest"]');
+    if (!link) return null;
+    const response = await fetch(link.href);
+    return { type: response.headers.get('content-type'), body: await response.json() };
+  });
+  check('the page offers a web manifest', manifest !== null);
+  check('it is served as a manifest', /manifest\+json/.test(manifest?.type ?? ''), manifest?.type);
+  check('it is installable standalone', manifest?.body?.display === 'standalone');
+  check('it has icons', (manifest?.body?.icons?.length ?? 0) >= 2);
+
+  const iconOk = await host.evaluate(async () => {
+    const response = await fetch('/static/icon-180.png');
+    return response.ok && (response.headers.get('content-type') ?? '').includes('png');
+  });
+  check('the home-screen icon loads', iconOk);
+  check('there is a fullscreen control', await host.isVisible('#btn-fullscreen'));
 
   // --- the session survives a reload ---------------------------------------
   await guest.reload();

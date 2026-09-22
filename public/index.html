@@ -7,6 +7,12 @@
 <meta name="color-scheme" content="dark">
 <title>Stream</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%235b8cff%27/%3E%3Cpath d=%27M12.5 9.8v12.4L23 16z%27 fill=%27%23fff%27/%3E%3C/svg%3E">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Movie Night">
+<meta name="mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -41,6 +47,7 @@
 
     <div class="bar">
       <div class="bar-left">
+        <span id="role-badge" class="role" hidden></span>
         <span id="now-playing" class="now-playing">Stream</span>
         <span id="sync-badge" class="badge" title="Difference between your position and the room's">in sync</span>
       </div>
@@ -55,6 +62,8 @@
           </select>
         </label>
         <button id="btn-resync" class="button ghost" title="Jump back to everyone else">Re-sync</button>
+        <button id="btn-stop" class="button ghost" title="Stop this film and go back to the library" hidden>Stop</button>
+        <button id="btn-fullscreen" class="button ghost" title="Fill the screen">Fullscreen</button>
         <button id="btn-library" class="button ghost">Library</button>
         <button id="btn-panel" class="button ghost" aria-expanded="false">Chat</button>
       </div>
@@ -64,7 +73,10 @@
   <aside class="panel" id="panel">
     <header class="panel-head">
       <div class="who" id="presence"></div>
-      <button id="btn-panel-close" class="icon-button" aria-label="Close panel">×</button>
+      <div class="panel-actions">
+        <button id="btn-leave" class="button ghost" title="Sign out of the room">Leave</button>
+        <button id="btn-panel-close" class="icon-button" aria-label="Close panel">×</button>
+      </div>
     </header>
     <div class="chat" id="chat"></div>
     <form class="composer" id="composer">

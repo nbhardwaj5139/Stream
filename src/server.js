@@ -23,7 +23,10 @@ import { parseRange } from './range.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const COOKIE_NAME = 'stream_session';
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// Long enough to sit through a film and a break, short enough that a borrowed
+// or forgotten browser does not stay in the room.
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const REMEMBERED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_BODY_BYTES = 4096;
 
 const STATIC_TYPES = {
@@ -33,6 +36,8 @@ const STATIC_TYPES = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.png': 'image/png',
+  '.webmanifest': 'application/manifest+json',
+  '.json': 'application/json',
 };
 
 function sendJson(res, status, body, headers = {}) {
@@ -86,6 +91,8 @@ export async function createServer(options = {}) {
     sessionSecret = generateToken(32),
     controlMode = 'everyone',
     libraryMode = 'host',
+    rememberDevices = false,
+    resetWhenEmptyMs = 90_000,
     autoPauseOnBuffer = true,
     allowTranscode = true,
     preferSoftwareEncoder = false,
@@ -122,6 +129,7 @@ export async function createServer(options = {}) {
   const encoder = pickEncoder(encoding.encoders, { preferSoftware: preferSoftwareEncoder });
 
   const connections = new Map(); // viewerId -> WebSocketConnection
+  let emptyRoomTimer = null;
 
   function broadcast(message, { except } = {}) {
     for (const [id, connection] of connections) {
@@ -144,7 +152,12 @@ export async function createServer(options = {}) {
     const token = signSession(sessionSecret, payload);
     // The tunnel terminates TLS and tells us so; mark the cookie Secure there.
     const secure = req.headers['x-forwarded-proto'] === 'https' ? ' Secure;' : '';
-    return `${COOKIE_NAME}=${token}; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}; SameSite=Lax; HttpOnly;${secure}`;
+    // No Max-Age means the cookie dies with the browser, so closing it and
+    // coming back asks for the passcode again. --remember-devices opts out.
+    const lifetime = rememberDevices
+      ? ` Max-Age=${Math.floor(REMEMBERED_TTL_MS / 1000)};`
+      : '';
+    return `${COOKIE_NAME}=${token}; Path=/;${lifetime} SameSite=Lax; HttpOnly;${secure}`;
   }
 
   async function handleJoin(req, res) {
@@ -176,7 +189,7 @@ export async function createServer(options = {}) {
     const payload = {
       role: isHost ? 'host' : 'guest',
       name: name.slice(0, 40),
-      expiresAt: Date.now() + SESSION_TTL_MS,
+      expiresAt: Date.now() + (rememberDevices ? REMEMBERED_TTL_MS : SESSION_TTL_MS),
     };
     sendJson(res, 200, { role: payload.role }, { 'set-cookie': sessionCookie(req, payload) });
   }
@@ -432,6 +445,7 @@ export async function createServer(options = {}) {
         name: session.name ?? '',
         controlMode: room.controlMode,
         libraryMode: room.libraryMode,
+        rememberDevices,
         ffmpeg: ffmpeg.ffmpeg,
         ffprobe: ffmpeg.ffprobe,
         encoder,
@@ -542,6 +556,7 @@ export async function createServer(options = {}) {
   });
 
   wss.on('connection', (connection) => {
+    clearTimeout(emptyRoomTimer);
     const viewer = room.addViewer({ role: connection.data.role, name: connection.data.name });
     connection.data.viewerId = viewer.id;
     connections.set(viewer.id, connection);
@@ -623,6 +638,17 @@ export async function createServer(options = {}) {
         // If we paused waiting for someone who then left, let the movie resume.
         if (room.waitingFor === null && room.paused) broadcastState();
       }
+
+      // Once everyone has gone, put the room back to nothing playing, so the
+      // next visit starts at the library rather than halfway through last
+      // night's film. The delay is so a dropped connection does not do it.
+      if (connections.size === 0 && resetWhenEmptyMs > 0) {
+        clearTimeout(emptyRoomTimer);
+        emptyRoomTimer = setTimeout(() => {
+          if (connections.size === 0) room.clearPlayback();
+        }, resetWhenEmptyMs);
+        emptyRoomTimer.unref?.();
+      }
     });
   });
 
@@ -636,6 +662,7 @@ export async function createServer(options = {}) {
   const originalClose = server.close.bind(server);
   server.close = (callback) => {
     clearInterval(resync);
+    clearTimeout(emptyRoomTimer);
     wss.close();
     return originalClose(callback);
   };

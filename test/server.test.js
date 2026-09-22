@@ -342,3 +342,33 @@ test('--shared-library opens the list back up', async () => {
 
   await new Promise((resolve) => shared.close(resolve));
 });
+
+test('the session ends with the browser unless devices are remembered', async () => {
+  // No Max-Age means the cookie is dropped when the browser closes, so the
+  // passcode is asked for again next time.
+  const response = await fetch(`${baseUrl}/api/join`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ passcode: GUEST_PASSCODE }),
+  });
+  const cookie = response.headers.get('set-cookie');
+  assert.doesNotMatch(cookie, /Max-Age/, 'the cookie must not outlive the browser');
+  assert.match(cookie, /HttpOnly/);
+
+  const remembering = await createServer({
+    roots: [mediaRoot],
+    hostPasscode: HOST_PASSCODE,
+    guestPasscode: GUEST_PASSCODE,
+    rememberDevices: true,
+  });
+  await new Promise((resolve) => remembering.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${remembering.address().port}`;
+  // The raw header, not the helper's trimmed name=value pair.
+  const remembered = await fetch(`${url}/api/join`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ passcode: GUEST_PASSCODE }),
+  });
+  assert.match(remembered.headers.get('set-cookie'), /Max-Age=\d+/);
+  await new Promise((resolve) => remembering.close(resolve));
+});

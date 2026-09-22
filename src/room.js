@@ -43,6 +43,9 @@ export class Room {
     this.chat = [];
     this.version = 0;
     this.waitingFor = null; // viewer id we auto-paused for
+    // Why we are paused. A pause somebody asked for must never be undone by
+    // the buffering logic deciding everyone has caught up.
+    this.pausedBy = null; // 'user' | 'buffer'
   }
 
   // Where the movie should be right now, in seconds.
@@ -117,6 +120,7 @@ export class Room {
         if (!this.paused) return { changed: false };
         this.paused = false;
         this.waitingFor = null;
+        this.pausedBy = null;
         return { changed: true, reason: 'play', by: viewer.id };
       }
 
@@ -126,6 +130,9 @@ export class Room {
             ? message.position
             : this.positionAt(timestamp);
         this.paused = true;
+        // Somebody asked for this, so stop waiting on anyone's buffer.
+        this.pausedBy = 'user';
+        this.waitingFor = null;
         this._anchor(position, timestamp);
         return { changed: true, reason: 'pause', by: viewer.id };
       }
@@ -157,6 +164,7 @@ export class Room {
         this.audioTrack = 0;
         this._anchor(Number(message.position) || 0, timestamp);
         this.waitingFor = null;
+        this.pausedBy = null;
         return { changed: true, reason: 'select', by: viewer.id };
       }
 
@@ -202,6 +210,7 @@ export class Room {
       // positionAt() stops advancing and would report the old anchor.
       const frozenAt = this.positionAt();
       this.paused = true;
+      this.pausedBy = 'buffer';
       this._anchor(frozenAt, this.clock());
       this.waitingFor = viewer.id;
       return { changed: true, reason: 'buffering', by: viewer.id };
@@ -209,9 +218,14 @@ export class Room {
 
     if (!viewer.buffering && wasBuffering && this.waitingFor === viewer.id) {
       this.waitingFor = null;
+      // Only resume a pause we caused. If somebody hit pause while we were
+      // waiting, that is the state they asked for and it stands.
+      if (this.pausedBy !== 'buffer') return { changed: false };
+
       const stillStalled = [...this.viewers.values()].some((other) => other.buffering);
       if (!stillStalled) {
         this.paused = false;
+        this.pausedBy = null;
         this._anchor(this.anchorPosition, this.clock());
         return { changed: true, reason: 'resume', by: viewer.id };
       }
@@ -237,6 +251,20 @@ export class Room {
     return entry;
   }
 
+  // Back to an empty room: nothing playing, nothing waiting. Chat is kept —
+  // it is the conversation, not the playback state.
+  clearPlayback() {
+    this.mediaId = null;
+    this.paused = true;
+    this.rate = 1;
+    this.audioTrack = 0;
+    this.quality = 'original';
+    this.waitingFor = null;
+    this.pausedBy = null;
+    this._anchor(0);
+    return this.snapshot();
+  }
+
   snapshot() {
     const timestamp = this.clock();
     return {
@@ -251,6 +279,7 @@ export class Room {
       quality: this.quality,
       controlMode: this.controlMode,
       libraryMode: this.libraryMode,
+      pausedBy: this.pausedBy,
       waitingFor: this.waitingFor,
     };
   }

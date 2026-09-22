@@ -416,3 +416,78 @@ test('two visitors behind the same tunnel are rate limited separately', () => {
   assert.equal(limiter.check(clientAddress(stranger)).allowed, false);
   assert.equal(limiter.check(clientAddress(her)).allowed, true, 'she is not locked out by a stranger');
 });
+
+test('a pause somebody asked for is not undone when a buffer clears', () => {
+  // The reported bug: the film would not stay paused. A viewer recovering from
+  // a stall resumed the room even though someone had since pressed pause.
+  let clock = 0;
+  const room = new Room({ clock: () => clock });
+  const host = room.addViewer({ role: 'host' });
+  const guest = room.addViewer({ role: 'guest' });
+
+  room.applyControl(host, { action: 'select', mediaId: 'abc' });
+  room.applyControl(host, { action: 'play', position: 0 });
+
+  // She stalls, so the room holds for her.
+  clock += 3000;
+  room.report(guest, { position: 3, buffering: true });
+  assert.equal(room.paused, true);
+  assert.equal(room.pausedBy, 'buffer');
+
+  // Meanwhile he presses pause deliberately.
+  room.applyControl(host, { action: 'pause', position: 3 });
+  assert.equal(room.pausedBy, 'user');
+  assert.equal(room.waitingFor, null, 'no longer waiting on anyone');
+
+  // Her buffer recovers. The film must stay paused.
+  const recovery = room.report(guest, { position: 3, buffering: false });
+  assert.equal(recovery.changed, false);
+  assert.equal(room.paused, true, 'the pause he asked for still stands');
+});
+
+test('a buffering hold still resumes by itself when nobody intervened', () => {
+  let clock = 0;
+  const room = new Room({ clock: () => clock });
+  const host = room.addViewer({ role: 'host' });
+  const guest = room.addViewer({ role: 'guest' });
+
+  room.applyControl(host, { action: 'play', position: 0 });
+  room.report(guest, { buffering: true });
+  assert.equal(room.pausedBy, 'buffer');
+
+  room.report(guest, { buffering: false });
+  assert.equal(room.paused, false);
+  assert.equal(room.pausedBy, null);
+});
+
+test('pressing play clears a buffering hold', () => {
+  const room = new Room();
+  const host = room.addViewer({ role: 'host' });
+  const guest = room.addViewer({ role: 'guest' });
+
+  room.applyControl(host, { action: 'play', position: 0 });
+  room.report(guest, { buffering: true });
+  assert.equal(room.waitingFor, guest.id);
+
+  room.applyControl(host, { action: 'play' });
+  assert.equal(room.waitingFor, null);
+  assert.equal(room.pausedBy, null);
+  assert.equal(room.paused, false);
+});
+
+test('an emptied room forgets what was playing but keeps the conversation', () => {
+  const room = new Room();
+  const host = room.addViewer({ role: 'host' });
+  room.applyControl(host, { action: 'select', mediaId: 'abc' });
+  room.applyControl(host, { action: 'play', position: 120 });
+  room.addChat(host, 'started without you');
+
+  room.clearPlayback();
+
+  assert.equal(room.mediaId, null, 'the next visit starts at the library');
+  assert.equal(room.paused, true);
+  assert.equal(room.positionAt(), 0);
+  assert.equal(room.waitingFor, null);
+  assert.equal(room.pausedBy, null);
+  assert.equal(room.chat.length, 1, 'chat is the conversation, not playback state');
+});

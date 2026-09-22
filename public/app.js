@@ -15,14 +15,19 @@ const dom = {
   overlay: el('overlay'),
   overlayText: el('overlay-text'),
   nudge: el('nudge'),
+  roleBadge: el('role-badge'),
   nowPlaying: el('now-playing'),
   syncBadge: el('sync-badge'),
   qualityWrap: el('quality-wrap'),
   quality: el('quality'),
   btnResync: el('btn-resync'),
+  btnStop: el('btn-stop'),
+  screen: document.querySelector('.screen'),
+  btnFullscreen: el('btn-fullscreen'),
   btnLibrary: el('btn-library'),
   btnPanel: el('btn-panel'),
   btnPanelClose: el('btn-panel-close'),
+  btnLeave: el('btn-leave'),
   presence: el('presence'),
   chat: el('chat'),
   composer: el('composer'),
@@ -195,6 +200,10 @@ function handleMessage(message) {
       state.library = message.library ?? [];
       state.capabilities = message.capabilities ?? {};
       dom.btnRescan.hidden = state.role !== 'host';
+      // Both sides use the same link, so say plainly which passcode got you in.
+      dom.roleBadge.textContent = state.role === 'host' ? 'Host' : 'Guest';
+      dom.roleBadge.dataset.role = state.role;
+      dom.roleBadge.hidden = false;
       renderLibrary();
       renderPermissions();
       for (const entry of message.chat ?? []) appendChat(entry, { quiet: true });
@@ -474,6 +483,9 @@ function renderPermissions() {
   const allowed = canBrowse();
   dom.btnLibrary.hidden = !allowed;
   dom.placeholderBrowse.hidden = !allowed;
+  // Stopping puts everyone back to the empty room, so it belongs to whoever
+  // is allowed to choose what plays.
+  dom.btnStop.hidden = !allowed || !state.room?.mediaId;
   if (!allowed) closeLibrary();
 }
 
@@ -563,6 +575,7 @@ function renderPresence() {
   for (const viewer of state.viewers) {
     const chip = document.createElement('span');
     chip.dataset.buffering = String(viewer.buffering);
+    chip.dataset.role = viewer.role;
     chip.textContent = viewer.id === state.me?.id ? `${viewer.name} (you)` : viewer.name;
     if (viewer.buffering) chip.textContent += ' · buffering';
     dom.presence.append(chip);
@@ -673,6 +686,49 @@ document.addEventListener('click', () => {
 
 dom.quality.addEventListener('change', () => control('quality', { quality: dom.quality.value }));
 
+// Fullscreen on the whole stage, so the overlays and "waiting for her to
+// buffer" messages stay visible. iOS Safari will not do that for an arbitrary
+// element, so there we hand the video its own native fullscreen instead.
+function isFullscreen() {
+  return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+async function toggleFullscreen() {
+  try {
+    if (isFullscreen()) {
+      await (document.exitFullscreen?.() ?? document.webkitExitFullscreen?.());
+      return;
+    }
+    const target = dom.screen;
+    if (target.requestFullscreen) {
+      await target.requestFullscreen({ navigationUI: 'hide' });
+    } else if (target.webkitRequestFullscreen) {
+      target.webkitRequestFullscreen();
+    } else if (dom.video.webkitEnterFullscreen) {
+      dom.video.webkitEnterFullscreen(); // iPhone Safari
+    } else {
+      toast('This browser will not allow fullscreen here.');
+    }
+  } catch {
+    toast('Fullscreen was refused.');
+  }
+}
+
+function renderFullscreenButton() {
+  dom.btnFullscreen.textContent = isFullscreen() ? 'Exit fullscreen' : 'Fullscreen';
+  dom.btnFullscreen.setAttribute('aria-pressed', String(isFullscreen()));
+}
+
+dom.btnFullscreen.addEventListener('click', toggleFullscreen);
+for (const event of ['fullscreenchange', 'webkitfullscreenchange']) {
+  document.addEventListener(event, renderFullscreenButton);
+}
+
+dom.btnStop.addEventListener('click', () => {
+  control('select', { mediaId: null });
+  flash('Stopped');
+});
+
 dom.btnResync.addEventListener('click', () => {
   state.bestRtt = Infinity;
   measureClock();
@@ -718,6 +774,11 @@ function togglePanel(open) {
   if (next) dom.chat.scrollTop = dom.chat.scrollHeight;
 }
 
+dom.btnLeave.addEventListener('click', async () => {
+  await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+  location.reload();
+});
+
 dom.btnPanel.addEventListener('click', () => togglePanel());
 dom.btnPanelClose.addEventListener('click', () => togglePanel(false));
 
@@ -733,6 +794,11 @@ document.addEventListener('keydown', (event) => {
   if (event.target.matches('input, textarea, select')) return;
   if (event.key === 'Escape') {
     closeLibrary();
+    return;
+  }
+  if (event.key === 'f') {
+    event.preventDefault();
+    toggleFullscreen();
     return;
   }
   if (event.key === ' ' || event.key === 'k') {

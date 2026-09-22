@@ -371,3 +371,87 @@ test('a guest cannot choose what plays', async () => {
   host.close();
   guest.close();
 });
+
+test('stopping puts the room back to nothing playing', async () => {
+  const host = connect(hostCookie);
+  const guest = connect(guestCookie);
+  await Promise.all([host.opened(), guest.opened()]);
+  const welcome = await host.next('welcome');
+  await guest.next('welcome');
+
+  host.send({ type: 'control', action: 'select', mediaId: welcome.library[0].id });
+  await guest.next((m) => m.type === 'state' && m.mediaId === welcome.library[0].id);
+
+  host.send({ type: 'control', action: 'select', mediaId: null });
+  const stopped = await guest.next((m) => m.type === 'state' && m.mediaId === null);
+  assert.equal(stopped.paused, true);
+  assert.equal(stopped.position, 0);
+
+  host.close();
+  guest.close();
+});
+
+test('the room resets to nothing playing once everyone has left', async () => {
+  const quick = await createServer({
+    roots: [mediaRoot],
+    hostPasscode: HOST_PASSCODE,
+    guestPasscode: GUEST_PASSCODE,
+    resetWhenEmptyMs: 150,
+  });
+  await new Promise((resolve) => quick.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${quick.address().port}`;
+
+  const response = await fetch(`${url}/api/join`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ passcode: HOST_PASSCODE }),
+  });
+  const cookie = response.headers.get('set-cookie').split(';')[0];
+
+  const socket = new WebSocket(`${url.replace('http', 'ws')}/ws`, { headers: { cookie } });
+  const welcome = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out')), 4000);
+    socket.addEventListener('message', (event) => {
+      const parsed = JSON.parse(event.data);
+      if (parsed.type === 'welcome') {
+        clearTimeout(timer);
+        resolve(parsed);
+      }
+    });
+  });
+
+  socket.send(JSON.stringify({ type: 'control', action: 'select', mediaId: welcome.library[0].id }));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(quick.room.mediaId, welcome.library[0].id);
+
+  socket.close();
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.equal(quick.room.mediaId, null, 'nobody left, so the room went home');
+
+  await new Promise((resolve) => quick.close(resolve));
+});
+
+test('a browser closing its tab actually removes the viewer', async () => {
+  // A graceful close frame used to leave the viewer behind: the teardown
+  // checked a flag that sending the close frame had already cleared. Ghosts
+  // then sat in presence forever, and one stuck mid-buffer could hold the
+  // whole room paused.
+  const watcher = connect(hostCookie);
+  await watcher.opened();
+  const mine = await watcher.next('welcome');
+
+  const leaving = connect(guestCookie);
+  await leaving.opened();
+  const theirs = await leaving.next('welcome');
+
+  await watcher.next(
+    (m) => m.type === 'presence' && m.viewers.some((v) => v.id === theirs.you.id)
+  );
+
+  leaving.close(); // a clean close, the way a tab closing does it
+  const gone = await watcher.next(
+    (m) => m.type === 'presence' && !m.viewers.some((v) => v.id === theirs.you.id)
+  );
+  assert.ok(gone.viewers.some((v) => v.id === mine.you.id), 'we are still here');
+  watcher.close();
+});

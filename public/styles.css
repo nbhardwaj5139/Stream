@@ -686,3 +686,35 @@ body.centered {
   }
   .spinner { animation-duration: 2.4s !important; animation-iteration-count: infinite !important; }
 }
+
+/* Who you signed in as. Two people sharing one link need to see which. */
+.role {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+.role[hidden] { display: none; }
+.role[data-role="host"] {
+  background: var(--accent-soft);
+  border-color: rgba(91, 140, 255, .32);
+  color: var(--accent-hover);
+}
+
+.who span[data-role="host"]::after {
+  content: "host";
+  font-size: 10px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--accent-hover);
+  margin-left: 2px;
+}
+
+.panel-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.panel-actions .button { padding: 5px 10px; font-size: 12.5px; }

@@ -33,6 +33,9 @@ export class WebSocketConnection extends EventEmitter {
     this.socket = socket;
     this.req = req;
     this.open = true;
+    // Tracked separately from `open`: sending a close frame clears `open`
+    // immediately, and the teardown still has to run after that.
+    this.closed = false;
     this.isAlive = true;
     this.data = {}; // room bookkeeping hangs off here
 
@@ -90,7 +93,8 @@ export class WebSocketConnection extends EventEmitter {
   }
 
   _teardown() {
-    if (!this.open) return;
+    if (this.closed) return;
+    this.closed = true;
     this.open = false;
     this.emit('close');
   }
