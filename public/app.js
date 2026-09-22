@@ -42,6 +42,12 @@ const dom = {
   btnRescan: el('btn-rescan'),
   btnLibraryClose: el('btn-library-close'),
   toast: el('toast'),
+  gate: el('gate'),
+  joinForm: el('join-form'),
+  joinName: el('name'),
+  joinPasscode: el('passcode'),
+  joinSubmit: el('submit'),
+  joinError: el('error'),
 };
 
 const state = {
@@ -62,6 +68,7 @@ const state = {
   needsGesture: false,
   buffering: false,
   filter: '',
+  entered: false,
 };
 
 // ------------------------------------------------------------------ misc --
@@ -163,9 +170,9 @@ function connect() {
   socket.addEventListener('close', async () => {
     state.connected = false;
     updateSyncBadge();
-    // A session that expired can't be fixed by retrying; send them to the door.
+    // A session that went away cannot be fixed by retrying; ask again.
     if (await sessionExpired()) {
-      location.reload();
+      showGate('You were signed out. Enter the passcode again.');
       return;
     }
     setTimeout(connect, reconnectDelay);
@@ -895,7 +902,8 @@ function togglePanel(open) {
 
 dom.btnLeave.addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
-  location.reload();
+  state.socket?.close();
+  showGate();
 });
 
 dom.btnPanel.addEventListener('click', () => togglePanel());
@@ -933,6 +941,65 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+// --------------------------------------------------------------- the gate --
+
+function showGate(message) {
+  state.entered = false;
+  dom.gate.hidden = false;
+  dom.app.hidden = true;
+  if (message) {
+    dom.joinError.textContent = message;
+    dom.joinError.hidden = false;
+  }
+  dom.joinName.value = localStorage.getItem('stream:name') ?? '';
+  (dom.joinName.value ? dom.joinPasscode : dom.joinName).focus();
+}
+
+function enterRoom() {
+  if (state.entered) return;
+  state.entered = true;
+  dom.gate.hidden = true;
+  dom.app.hidden = false;
+  connect();
+}
+
+dom.joinForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  dom.joinError.hidden = true;
+  dom.joinSubmit.disabled = true;
+  dom.joinSubmit.textContent = 'Checking…';
+
+  try {
+    const response = await fetch('/api/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        passcode: dom.joinPasscode.value.trim(),
+        name: dom.joinName.value.trim(),
+      }),
+    });
+
+    if (response.ok) {
+      const name = dom.joinName.value.trim();
+      if (name) localStorage.setItem('stream:name', name);
+      enterRoom();
+      return;
+    }
+
+    const body = await response.json().catch(() => ({}));
+    dom.joinError.textContent = body.error ?? 'Could not join. Try again.';
+    dom.joinError.hidden = false;
+    dom.joinPasscode.select();
+  } catch {
+    dom.joinError.textContent = 'Could not reach the room. Is it still running?';
+    dom.joinError.hidden = false;
+  } finally {
+    dom.joinSubmit.disabled = false;
+    dom.joinSubmit.textContent = 'Join';
+  }
+});
+
 setInterval(() => {
   if (!state.connected) return;
   send({
@@ -948,4 +1015,18 @@ setInterval(() => {
 setInterval(updateSyncBadge, 1000);
 setInterval(() => measureClock(2), 60_000);
 
-connect();
+// Loading the page clears any session, so this is normally the gate. The check
+// still runs, so a tab restored mid-session goes straight back in.
+(async () => {
+  let authenticated = false;
+  try {
+    authenticated = (await fetch('/api/session', { credentials: 'same-origin' })).ok;
+  } catch {
+    /* treat as not signed in */
+  }
+  // This check is slower than typing a passcode, so it must not undo a join
+  // that already happened while it was in flight.
+  if (state.entered) return;
+  if (authenticated) enterRoom();
+  else showGate();
+})();

@@ -68,12 +68,38 @@ after(async () => {
   await fs.rm(mediaRoot, { recursive: true, force: true });
 });
 
-test('the front door shows a passcode page, not an error', async () => {
+test('the front door shows a passcode gate, not an error', async () => {
   const page = await fetch(`${baseUrl}/`);
   assert.equal(page.status, 200);
   const html = await page.text();
   assert.match(html, /passcode/i);
   assert.match(html, /id="join-form"/);
+});
+
+test('loading the page drops any session, so a reload asks again', async () => {
+  const cookie = (await join(baseUrl, GUEST_PASSCODE)).cookie;
+  assert.equal((await fetch(`${baseUrl}/api/session`, as(cookie))).status, 200);
+
+  // Opening the page is what clears it — that is the whole mechanism.
+  const page = await fetch(`${baseUrl}/`, as(cookie));
+  assert.match(page.headers.get('set-cookie'), /Max-Age=0/);
+});
+
+test('the room heading can be set, and is escaped', async () => {
+  const named = await createServer({
+    roots: [mediaRoot],
+    hostPasscode: HOST_PASSCODE,
+    guestPasscode: GUEST_PASSCODE,
+    roomName: 'Nick & Priya <3',
+  });
+  await new Promise((resolve) => named.listen(0, '127.0.0.1', resolve));
+  const html = await (await fetch(`http://127.0.0.1:${named.address().port}/`)).text();
+
+  assert.match(html, /Nick &amp; Priya &lt;3/);
+  assert.doesNotMatch(html, /Nick & Priya <3/, 'the name must not be injected raw');
+  assert.doesNotMatch(html, /\{\{ROOM_NAME\}\}/, 'the placeholder is filled in');
+
+  await new Promise((resolve) => named.close(resolve));
 });
 
 test('a correct passcode returns a session cookie and the right role', async () => {

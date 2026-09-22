@@ -70,6 +70,10 @@ New passcodes are generated every time you start it, so last week's code stops
 working when the evening ends. Pass `--keep-passcodes` to reuse the previous
 set, or `--passcode` / `--host-passcode` to pin your own.
 
+The passcode is asked for every time the page is opened, including a reload —
+loading the page drops the session, and the passcode screen is part of the page
+rather than a separate one, so joining never navigates away from it.
+
 ## Options
 
 ```
@@ -80,6 +84,7 @@ set, or `--passcode` / `--host-passcode` to pin your own.
     --keep-passcodes      Reuse last session's passcodes instead of new ones
     --host-only           Only you can play/pause/seek; she just watches
     --shared-library      Let her browse your files too (default: host only)
+    --room-name <text>    Heading on the passcode screen
     --no-tunnel           Don't create a public link (same Wi-Fi only)
     --no-auto-pause       Don't pause everyone when one side is buffering
     --no-transcode        Never invoke ffmpeg
@@ -282,7 +287,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 91 unit and integration tests, no dependencies needed
+npm test          # 107 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright
@@ -303,6 +308,6 @@ node test/e2e/browser.mjs /path/to/a/folder/with/a/video
 | `src/ws.js` | a small RFC 6455 WebSocket server (keeps dependencies at zero) |
 | `src/media.js` | folder scanning, ffprobe, HDR and bitrate detection |
 | `src/transcode.js` | encoder selection, HDR tone mapping, ffmpeg arguments |
+| `src/hls.js` | HLS segmenting, for Safari and anything else fussy |
 | `src/subtitles.js` | SRT/ASS → WebVTT |
-| `public/join.html` | the passcode door |
 | `public/app.js` | the player, drift correction, chat |

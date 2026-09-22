@@ -41,6 +41,12 @@ const STATIC_TYPES = {
   '.json': 'application/json',
 };
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character]);
+}
+
 function sendJson(res, status, body, headers = {}) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -92,6 +98,7 @@ export async function createServer(options = {}) {
     sessionSecret = generateToken(32),
     controlMode = 'everyone',
     libraryMode = 'host',
+    roomName = 'Tonight at the pictures',
     rememberDevices = false,
     resetWhenEmptyMs = 90_000,
     autoPauseOnBuffer = true,
@@ -202,7 +209,7 @@ export async function createServer(options = {}) {
 
   // ---------------------------------------------------------------- HTTP ---
 
-  async function serveStatic(req, res, name) {
+  async function serveStatic(req, res, name, extraHeaders = {}) {
     const safeName = path.basename(name);
     const filePath = path.join(PUBLIC_DIR, safeName);
     let stat;
@@ -216,10 +223,26 @@ export async function createServer(options = {}) {
       sendText(res, 404, 'Not found');
       return;
     }
+    const extension = path.extname(safeName).toLowerCase();
+    const type = STATIC_TYPES[extension] ?? 'application/octet-stream';
+
+    if (extension === '.html') {
+      const html = (await fsp.readFile(filePath, 'utf8')).replaceAll('{{ROOM_NAME}}', escapeHtml(roomName));
+      res.writeHead(200, {
+        'content-type': type,
+        'content-length': Buffer.byteLength(html),
+        'cache-control': 'no-store',
+        ...extraHeaders,
+      });
+      res.end(req.method === 'HEAD' ? undefined : html);
+      return;
+    }
+
     res.writeHead(200, {
-      'content-type': STATIC_TYPES[path.extname(safeName).toLowerCase()] ?? 'application/octet-stream',
+      'content-type': type,
       'content-length': stat.size,
       'cache-control': 'no-cache',
+      ...extraHeaders,
     });
     if (req.method === 'HEAD') {
       res.end();
@@ -520,9 +543,13 @@ export async function createServer(options = {}) {
 
     const session = identify(req);
 
-    // The room door: no session yet means the passcode page, not an error.
+    // Loading the page drops any session, so the passcode is asked for every
+    // time it is opened. The gate is part of the page, so joining does not
+    // navigate and does not clear itself.
     if (pathname === '/' || pathname === '/index.html') {
-      await serveStatic(req, res, session ? 'index.html' : 'join.html');
+      await serveStatic(req, res, 'index.html', {
+        'set-cookie': `${COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly`,
+      });
       return;
     }
 

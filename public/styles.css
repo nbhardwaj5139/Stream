@@ -777,3 +777,20 @@ body.centered {
   .placeholder h1 { font-size: 22px; }
   .placeholder p { font-size: 15px; }
 }
+
+/* The passcode gate sits over the app, so joining never navigates away and a
+   reload always comes back here. */
+.gate {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow-y: auto;
+  background:
+    radial-gradient(70% 55% at 50% 0%, rgba(91, 140, 255, .10) 0%, transparent 65%),
+    var(--bg);
+}
+.gate[hidden] { display: none; }
+.app[hidden] { display: none; }

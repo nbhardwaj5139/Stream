@@ -249,8 +249,9 @@ try {
 
   // --- the session survives a reload ---------------------------------------
   await guest.reload();
-  await guest.waitForSelector('#btn-panel', { state: 'visible', timeout: 10_000 });
-  check('a reload does not ask for the passcode again', !(await guest.isVisible('#join-form')));
+  await guest.waitForSelector('#join-form', { state: 'visible', timeout: 10_000 });
+  check('a reload asks for the passcode again', await guest.isVisible('#join-form'));
+  check('and the room is not shown behind it', !(await guest.isVisible('#btn-panel')));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

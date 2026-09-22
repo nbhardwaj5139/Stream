@@ -25,6 +25,7 @@ Options
       --new-passcodes       Throw away the saved passcodes and make new ones
       --host-only           Only you can play/pause/seek; she just watches
       --shared-library      Let her browse your files too (default: host only)
+      --room-name <text>    Heading on the passcode screen
       --hostname <domain>   Your own domain, e.g. movies.example.com
       --tunnel-name <name>  Run this named Cloudflare tunnel instead of a
                             throwaway one (pairs with --hostname)
@@ -52,6 +53,7 @@ function parseArgs(argv) {
     tunnelName: null,
     controlMode: 'everyone',
     libraryMode: 'host',
+    roomName: null,
     tunnel: true,
     autoPauseOnBuffer: true,
     allowTranscode: true,
@@ -75,6 +77,7 @@ function parseArgs(argv) {
       case '--tunnel-name': options.tunnelName = argv[++i]; break;
       case '--host-only': options.controlMode = 'host'; break;
       case '--shared-library': options.libraryMode = 'shared'; break;
+      case '--room-name': options.roomName = argv[++i]; break;
       case '--no-tunnel': options.tunnel = false; break;
       case '--no-auto-pause': options.autoPauseOnBuffer = false; break;
       case '--no-transcode': options.allowTranscode = false; break;
@@ -214,6 +217,7 @@ const server = await createServer({
   sessionSecret,
   controlMode: options.controlMode,
   libraryMode: options.libraryMode,
+  ...(options.roomName ? { roomName: options.roomName } : {}),
   autoPauseOnBuffer: options.autoPauseOnBuffer,
   allowTranscode: options.allowTranscode,
   preferSoftwareEncoder: options.preferSoftwareEncoder,
