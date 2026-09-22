@@ -423,11 +423,23 @@ function seekLocal(position) {
 
 async function playVideo() {
   try {
+    dom.video.muted = false;
     await dom.video.play();
     state.needsGesture = false;
     hideOverlay();
+    return;
   } catch {
-    // Browsers block autoplay until the viewer interacts with the page.
+    /* blocked for having sound; try again without it */
+  }
+
+  // Start the picture muted rather than showing nothing, then ask for the one
+  // tap that lets the sound in. A silent film beats a black rectangle.
+  try {
+    dom.video.muted = true;
+    await dom.video.play();
+    state.needsGesture = true;
+    showOverlay('Tap anywhere for sound');
+  } catch {
     state.needsGesture = true;
     showOverlay('Tap anywhere to start watching');
   }
@@ -585,6 +597,11 @@ function updateSyncBadge() {
     return;
   }
   if (room?.source === 'screen') {
+    if (!screenShare.sharing && dom.video.muted && !dom.video.paused) {
+      badge.textContent = 'Muted — tap for sound';
+      badge.dataset.state = 'drifting';
+      return;
+    }
     badge.textContent = screenShare.sharing ? 'Sharing your screen' : 'Watching their screen';
     badge.dataset.state = 'ok';
     return;
@@ -905,8 +922,10 @@ dom.video.addEventListener('error', () => {
 document.addEventListener('click', () => {
   if (!state.needsGesture) return;
   state.needsGesture = false;
+  // The tap is what buys the sound, so take it.
+  dom.video.muted = false;
+  hideOverlay();
   if (isScreenMode()) {
-    hideOverlay();
     playVideo();
     return;
   }

@@ -793,11 +793,14 @@ export async function createServer(options = {}) {
 
     connection.on('close', () => {
       connections.delete(viewer.id);
+      const before = room.source;
       const removed = room.removeViewer(viewer.id);
       if (removed) {
         broadcastPresence();
-        // If we paused waiting for someone who then left, let the movie resume.
-        if (room.waitingFor === null && room.paused) broadcastState();
+        // Their leaving may have ended a share, or released a hold.
+        if (room.source !== before || (room.waitingFor === null && room.paused)) {
+          broadcastState();
+        }
       }
 
       // Once everyone has gone, put the room back to nothing playing, so the

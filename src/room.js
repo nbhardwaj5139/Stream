@@ -36,6 +36,9 @@ export class Room {
     // 'file' plays something off the disk; 'screen' is the host's screen over
     // WebRTC, which sidesteps every codec question and adapts to the link.
     this.source = 'file';
+    // Who is sharing. A screen belongs to the person whose screen it is, so
+    // the room cannot stay in screen mode once they have gone.
+    this.sharerId = null;
     this.mediaId = null;
     this.paused = true;
     this.rate = 1;
@@ -93,6 +96,15 @@ export class Room {
     const viewer = this.viewers.get(id);
     this.viewers.delete(id);
     if (this.waitingFor === id) this.waitingFor = null;
+    // Their screen left with them. Without this the room stays in screen mode
+    // forever, and whoever joins next is told they are watching a screen that
+    // nobody is sharing.
+    if (this.sharerId === id) {
+      this.sharerId = null;
+      this.source = 'file';
+      this.paused = true;
+      this._anchor(0);
+    }
     return viewer ?? null;
   }
 
@@ -188,6 +200,7 @@ export class Room {
         }
         if (this.source === message.source) return { changed: false };
         this.source = message.source;
+        this.sharerId = message.source === 'screen' ? viewer.id : null;
         this.paused = true;
         this.pausedBy = null;
         this.waitingFor = null;
@@ -199,6 +212,7 @@ export class Room {
       case 'select': {
         if (!this.canBrowse(viewer)) return { changed: false, reason: 'not-allowed-browse' };
         this.source = 'file';
+        this.sharerId = null;
         this.mediaId = typeof message.mediaId === 'string' ? message.mediaId : null;
         this.paused = true;
         this.rate = 1;
@@ -316,6 +330,7 @@ export class Room {
   // it is the conversation, not the playback state.
   clearPlayback() {
     this.source = 'file';
+    this.sharerId = null;
     this.mediaId = null;
     this.waitingSince = null;
     this.paused = true;
@@ -335,6 +350,7 @@ export class Room {
       version: this.version,
       serverTime: timestamp,
       source: this.source,
+      sharerId: this.sharerId,
       mediaId: this.mediaId,
       paused: this.paused,
       position: this.positionAt(timestamp),

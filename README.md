@@ -227,7 +227,15 @@ What it costs:
   so a strict corporate network can block it where plain HTTPS would not.
 
 Playback controls do nothing during a share, because a live stream has nothing
-to seek. Picking a film from the library ends the share by itself.
+to seek. Picking a film from the library ends the share by itself, and the room
+comes out of screen mode by itself if whoever was sharing closes their tab.
+
+**If the picture arrives without sound on an iPhone or iPad**, check the
+ring/silent switch on the side of the device first. iOS mutes inline video when
+that switch is set to silent, no matter what the page does. Beyond that, a
+browser will not start a video with sound until someone touches the page, so
+the picture starts muted and the room says *"Tap anywhere for sound"* until it
+is tapped.
 
 ## Quality, and what 4K actually costs
 
@@ -340,7 +348,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 128 unit and integration tests, no dependencies needed
+npm test          # 130 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright

@@ -93,3 +93,39 @@ test('an emptied room forgets the screen too', () => {
   room.clearPlayback();
   assert.equal(room.source, 'file');
 });
+
+test('the room leaves screen mode when the person sharing goes', () => {
+  // Otherwise the next person to join is told they are watching a screen that
+  // nobody is sharing — including the host, on their own machine.
+  const room = new Room();
+  const host = room.addViewer({ role: 'host' });
+  const guest = room.addViewer({ role: 'guest' });
+
+  room.applyControl(host, { action: 'source', source: 'screen' });
+  assert.equal(room.source, 'screen');
+  assert.equal(room.sharerId, host.id);
+
+  // Somebody else leaving changes nothing.
+  room.removeViewer(guest.id);
+  assert.equal(room.source, 'screen');
+
+  room.removeViewer(host.id);
+  assert.equal(room.source, 'file', 'their screen left with them');
+  assert.equal(room.sharerId, null);
+  assert.equal(room.snapshot().source, 'file');
+});
+
+test('stopping a share by hand clears who was sharing', () => {
+  const room = new Room();
+  const host = room.addViewer({ role: 'host' });
+
+  room.applyControl(host, { action: 'source', source: 'screen' });
+  room.applyControl(host, { action: 'source', source: 'file' });
+  assert.equal(room.sharerId, null);
+
+  // And picking a film does too, since that ends the share.
+  room.applyControl(host, { action: 'source', source: 'screen' });
+  room.applyControl(host, { action: 'select', mediaId: 'abc' });
+  assert.equal(room.source, 'file');
+  assert.equal(room.sharerId, null);
+});
