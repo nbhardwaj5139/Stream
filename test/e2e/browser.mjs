@@ -302,17 +302,22 @@ try {
   const hostBadge = await host.textContent('#sync-badge');
   check('the host is told they are sharing', hostBadge === 'Sharing your screen', hostBadge);
 
-  // The host's own preview must survive the state change their share caused.
-  const preview = await host.evaluate(() => {
+  // Sharing the whole screen means a preview of it would contain itself, so
+  // the host gets told what is happening instead of an infinite mirror.
+  const hostView = await host.evaluate(() => {
     const video = document.getElementById('video');
     return {
-      playing: !video.paused,
-      tracks: video.srcObject ? video.srcObject.getVideoTracks().length : 0,
+      videoHidden: video.hidden,
+      hasStream: Boolean(video.srcObject),
+      title: document.getElementById('placeholder-title').textContent,
+      nowPlaying: document.getElementById('now-playing').textContent,
       overlay: document.getElementById('overlay').hidden ? null : document.getElementById('overlay-text').textContent,
     };
   });
-  check('the host keeps their own preview', preview.tracks > 0 && preview.playing, JSON.stringify(preview));
-  check('and is not asked to tap to start', preview.overlay === null, String(preview.overlay));
+  check('the host is not shown their own screen back', hostView.videoHidden && !hostView.hasStream, JSON.stringify(hostView));
+  check('they are told they are sharing', /sharing this screen/i.test(hostView.title), hostView.title);
+  check('the title says so too', hostView.nowPlaying === 'Sharing your screen', hostView.nowPlaying);
+  check('and nobody is asked to tap to start', hostView.overlay === null, String(hostView.overlay));
 
   await host.click('#btn-share');
   const backToFiles = await until(

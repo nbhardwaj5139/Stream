@@ -438,6 +438,14 @@ function applyState(room, { initial = false } = {}) {
   state.room = room;
 
   if (room.source === 'screen') {
+    if (screenShare.sharing) {
+      state.media = null;
+      renderSharingCard();
+      renderMedia();
+      renderPermissions();
+      updateSyncBadge();
+      return;
+    }
     if (previous?.source !== 'screen') {
       state.media = null;
       dom.placeholder.hidden = true;
@@ -452,7 +460,9 @@ function applyState(room, { initial = false } = {}) {
         dom.video.srcObject = null;
         showOverlay('Connecting to their screen…');
       }
+      renderMedia();
     }
+    renderMedia();
     renderPermissions();
     renderQuality();
     updateSyncBadge();
@@ -617,6 +627,22 @@ function canBrowse() {
   return state.role === 'host' || state.room?.libraryMode === 'shared';
 }
 
+// What the host sees while sharing: not their own screen back again.
+function renderSharingCard() {
+  dom.video.hidden = true;
+  dom.placeholder.hidden = false;
+  hideOverlay();
+
+  const others = state.viewers.filter((viewer) => viewer.id !== state.me?.id);
+  dom.placeholderTitle.textContent = 'You are sharing this screen';
+  dom.placeholderText.textContent =
+    'Play the film however you like — everything on this monitor goes across.';
+  dom.placeholderHint.textContent = others.length
+    ? `${others.map((viewer) => viewer.name).join(' and ')} ${others.length === 1 ? 'is' : 'are'} watching.`
+    : 'Nobody has joined yet.';
+  dom.placeholderBrowse.hidden = true;
+}
+
 function renderEmptyState() {
   const others = state.viewers.filter((viewer) => viewer.id !== state.me?.id);
   if (canBrowse()) {
@@ -644,7 +670,7 @@ function renderPermissions() {
   // Only the host has a screen, and only some browsers will hand it over.
   dom.btnShare.hidden = state.role !== 'host' || !navigator.mediaDevices?.getDisplayMedia;
   dom.btnLibrary.hidden = !allowed;
-  dom.placeholderBrowse.hidden = !allowed;
+  dom.placeholderBrowse.hidden = !allowed || (isScreenMode() && screenShare.sharing);
   // Stopping puts everyone back to the empty room, so it belongs to whoever
   // is allowed to choose what plays.
   dom.btnStop.hidden = !allowed || !state.room?.mediaId;
@@ -666,7 +692,7 @@ function renderMedia() {
   const media = state.media;
   if (isScreenMode()) {
     dom.nowPlaying.textContent = screenShare.sharing ? 'Sharing your screen' : 'Their screen';
-    document.title = 'Screen — Stream';
+    document.title = screenShare.sharing ? 'Sharing — Stream' : 'Their screen — Stream';
     renderQuality();
     return;
   }
@@ -1094,13 +1120,12 @@ async function startSharing() {
   dom.btnShare.setAttribute('aria-pressed', 'true');
   control('source', { source: 'screen' });
 
-  // Show the host their own screen, muted, or the room echoes.
+  // Deliberately no preview: sharing the whole screen means a preview of it
+  // sits inside itself, repeating into infinity. The host is looking at the
+  // real thing already.
   dom.video.removeAttribute('src');
-  dom.video.srcObject = started.stream;
-  dom.video.muted = true;
-  dom.video.hidden = false;
-  dom.placeholder.hidden = true;
-  playVideo();
+  dom.video.srcObject = null;
+  renderSharingCard();
 
   for (const viewer of state.viewers) {
     if (viewer.id !== state.me?.id) screenShare.offerTo(viewer.id);
