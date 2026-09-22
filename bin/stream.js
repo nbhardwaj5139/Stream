@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { createServer } from '../src/server.js';
 import { generatePasscode, generateToken } from '../src/auth.js';
-import { hasCloudflared, startTunnel } from '../src/tunnel.js';
+import { hasCloudflared, startTunnel, startNamedTunnel } from '../src/tunnel.js';
 
 const CONFIG_PATH = path.join(os.homedir(), '.stream-room.json');
 
@@ -21,6 +21,9 @@ Options
       --host-passcode <code>  Set your own passcode
       --new-passcodes       Throw away the saved passcodes and make new ones
       --host-only           Only you can play/pause/seek; she just watches
+      --hostname <domain>   Your own domain, e.g. movies.example.com
+      --tunnel-name <name>  Run this named Cloudflare tunnel instead of a
+                            throwaway one (pairs with --hostname)
       --no-tunnel           Don't create a public link (same Wi-Fi only)
       --no-auto-pause       Don't pause everyone when one side is buffering
       --no-transcode        Never invoke ffmpeg
@@ -30,6 +33,7 @@ Options
 Examples
   node bin/stream.js "D:\\Movies"
   node bin/stream.js -d "D:\\Movies" -d "E:\\Films" --passcode POPCORN
+  node bin/stream.js "D:\\Movies" --tunnel-name movies --hostname movies.example.com
 `.trim();
 
 function parseArgs(argv) {
@@ -39,6 +43,8 @@ function parseArgs(argv) {
     passcode: null,
     hostPasscode: null,
     newPasscodes: false,
+    hostname: null,
+    tunnelName: null,
     controlMode: 'everyone',
     tunnel: true,
     autoPauseOnBuffer: true,
@@ -58,6 +64,8 @@ function parseArgs(argv) {
       case '--passcode': options.passcode = argv[++i]; break;
       case '--host-passcode': options.hostPasscode = argv[++i]; break;
       case '--new-passcodes': options.newPasscodes = true; break;
+      case '--hostname': options.hostname = argv[++i]; break;
+      case '--tunnel-name': options.tunnelName = argv[++i]; break;
       case '--host-only': options.controlMode = 'host'; break;
       case '--no-tunnel': options.tunnel = false; break;
       case '--no-auto-pause': options.autoPauseOnBuffer = false; break;
@@ -184,15 +192,34 @@ if (!server.capabilities.ffmpeg) {
   console.log(`\n  Using ${server.capabilities.encoder} for 4K re-encoding (GPU accelerated).`);
 }
 
+// Strip any scheme the user typed so we always build exactly one https:// URL.
+const hostname = options.hostname?.replace(/^https?:\/\//, '').replace(/\/+$/, '') ?? null;
+
 let tunnel = null;
 if (options.tunnel) {
   if (await hasCloudflared()) {
-    process.stdout.write('\nStarting public link... ');
-    try {
-      tunnel = await startTunnel(options.port);
-      console.log('done');
-    } catch (error) {
-      console.log(`failed (${error.message})`);
+    if (options.tunnelName) {
+      process.stdout.write(`\nConnecting tunnel "${options.tunnelName}"... `);
+      try {
+        tunnel = await startNamedTunnel(options.tunnelName);
+        console.log('done');
+        if (!hostname) {
+          console.log(
+            '  Note: pass --hostname so the link printed below is the right one.\n' +
+              '  The tunnel routes whatever hostname its config file says.'
+          );
+        }
+      } catch (error) {
+        console.log(`failed (${error.message})`);
+      }
+    } else {
+      process.stdout.write('\nStarting public link... ');
+      try {
+        tunnel = await startTunnel(options.port);
+        console.log('done');
+      } catch (error) {
+        console.log(`failed (${error.message})`);
+      }
     }
   } else {
     console.log(
@@ -203,7 +230,10 @@ if (options.tunnel) {
   }
 }
 
-const base = tunnel?.url ?? `http://localhost:${options.port}`;
+// A hostname you own wins: it is the address that will still work next month.
+const base = hostname
+  ? `https://${hostname}`
+  : tunnel?.url ?? `http://localhost:${options.port}`;
 console.log('\n' + '─'.repeat(62));
 console.log('  Send her this link and this passcode:');
 console.log(`\n    ${base}`);
@@ -211,7 +241,7 @@ console.log(`    passcode:  ${guestPasscode}`);
 console.log(`\n  Your own passcode (same link):  ${hostPasscode}`);
 console.log('─'.repeat(62));
 
-if (!tunnel) {
+if (!tunnel && !hostname) {
   const lan = localAddresses(options.port);
   if (lan.length) {
     console.log('On the same Wi-Fi she can also use:');
@@ -221,6 +251,12 @@ if (!tunnel) {
 
 console.log(`\nControl: ${options.controlMode === 'host' ? 'only you' : 'either of you'} can play, pause and seek.`);
 console.log(`Passcodes are saved in ${CONFIG_PATH} and reused next time.`);
+if (hostname && !options.tunnelName && options.tunnel) {
+  console.log(
+    `\nUsing ${base} as the address. If you run cloudflared yourself\n` +
+      '(as a service, say), add --no-tunnel so two tunnels do not fight.'
+  );
+}
 console.log('Press Ctrl+C to stop.\n');
 
 let shuttingDown = false;

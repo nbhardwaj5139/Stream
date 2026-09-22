@@ -80,6 +80,81 @@ week. Set your own with `--passcode`, or roll them with `--new-passcodes`.
     --software-encoding   Force CPU encoding even if a GPU encoder exists
 ```
 
+## Using your own domain
+
+A quick tunnel gets a new address on every restart. If you own a domain on
+Cloudflare, a **named tunnel** gives you one permanent address instead, so the
+link you sent her keeps working forever.
+
+One-time setup:
+
+```bash
+cloudflared tunnel login                 # opens a browser, pick your domain
+cloudflared tunnel create movies         # creates the tunnel and its credentials
+cloudflared tunnel route dns movies movies.example.com
+```
+
+Then put the ingress in cloudflared's config (`%USERPROFILE%\.cloudflared\config.yml`
+on Windows, `~/.cloudflared/config.yml` elsewhere):
+
+```yaml
+tunnel: movies
+credentials-file: C:\Users\you\.cloudflared\<tunnel-id>.json
+
+ingress:
+  - hostname: movies.example.com
+    service: http://localhost:8420
+  - service: http_status:404
+```
+
+And run:
+
+```bash
+node bin/stream.js "D:\Movies" --tunnel-name movies --hostname movies.example.com
+```
+
+If you already run cloudflared as a background service, leave it alone and just
+tell the app what address to print:
+
+```bash
+node bin/stream.js "D:\Movies" --hostname movies.example.com --no-tunnel
+```
+
+Either way your laptop still has to be awake and running the server — Cloudflare
+is a front door, not a host.
+
+### What a domain does and doesn't protect
+
+It genuinely gives you:
+
+- **Real HTTPS** on a certificate for your own domain.
+- **No open ports and no exposed home IP.** The tunnel dials out; nothing on
+  your router is forwarded inward, and your address never appears in DNS.
+- **DDoS filtering** at Cloudflare's edge, before anything reaches your laptop.
+
+It does not, by itself, keep anyone out. The passcode is still the only thing
+standing between a visitor and your library, and a permanent domain is *more*
+discoverable than a random quick-tunnel address, not less — every certificate
+Cloudflare issues for `movies.example.com` is published in the public
+Certificate Transparency logs, which people scan. Expect strangers to find the
+door eventually; the rate limiter is what makes that boring rather than
+dangerous.
+
+If you want a real second lock, put **Cloudflare Access** in front of the
+hostname (Zero Trust → Access → Applications). It's free for small numbers of
+users, and it authenticates people at Cloudflare's edge — by email one-time
+code, Google, whatever — so an unauthorised visitor never reaches your laptop
+at all. Then the passcode becomes the second factor rather than the only one.
+The one cost is that she has to pass Cloudflare's login as well as the
+passcode, which is more friction on an iPad.
+
+One caveat worth knowing: Cloudflare's self-serve terms restrict using the
+proxy to serve large volumes of video. Two people watching a film a week is
+not what that rule is aimed at, but sustained heavy streaming through an
+orange-clouded hostname has gotten people warned before. If that matters to
+you, Tailscale is the alternative — no ToS question, at the cost of installing
+an app on her device.
+
 ## How the syncing works
 
 The server keeps one piece of truth: *the movie was at position P at server-time
@@ -160,8 +235,8 @@ Keyboard: <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> jump 10s 
   takes a second or two to resume. Original-quality files seek instantly.
 - **Your laptop has to stay awake** with the terminal open.
 - **Cloudflare quick tunnels get a new address each run.** The passcode stays
-  the same, but the domain changes; use a named Cloudflare tunnel if you want a
-  permanent URL.
+  the same, but the domain changes. Use your own domain with a named tunnel
+  (see above) for an address that never changes.
 - **Upload speed is the real ceiling.** 1080p is roughly 8 Mbps, 720p about 4.
   If she keeps buffering, drop a step — that's what the selector is for.
 - **This does not share your screen.** It plays files from the folders you
@@ -182,6 +257,8 @@ browse and watch the folders you shared.
 - Files are addressed by an opaque id, never by a path from the request, so
   there's no way to walk out of the folders you chose.
 - Only video files inside those folders are ever served.
+- Behind a tunnel the real visitor is read from `CF-Connecting-IP`, so the rate
+  limiter counts people rather than lumping everyone into one bucket.
 
 There's no TLS of its own — the Cloudflare tunnel provides HTTPS. This is built
 for two people who know each other, not for the open web.
@@ -189,7 +266,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 67 unit and integration tests, no dependencies needed
+npm test          # 69 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright

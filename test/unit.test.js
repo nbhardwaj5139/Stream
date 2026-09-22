@@ -7,6 +7,7 @@ import { Room } from '../src/room.js';
 import { buildFfmpegArgs, buildVideoFilter, pickEncoder, MAX_HEIGHT_BY_QUALITY } from '../src/transcode.js';
 import {
   AttemptLimiter,
+  clientAddress,
   generatePasscode,
   hashPasscode,
   parseCookies,
@@ -383,4 +384,35 @@ test('the websocket handshake matches the RFC 6455 worked example', () => {
   // Getting the magic GUID wrong makes every browser refuse the connection,
   // so pin it to the published vector.
   assert.equal(acceptKey('dGhlIHNhbXBsZSBub25jZQ=='), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=');
+});
+
+test('the real visitor is identified behind a Cloudflare tunnel', () => {
+  // Without this every request looks like 127.0.0.1 and the per-client rate
+  // limit collapses into one shared bucket for everybody.
+  const cf = clientAddress({
+    headers: { 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '198.51.100.9, 10.0.0.1' },
+    socket: { remoteAddress: '127.0.0.1' },
+  });
+  assert.equal(cf, '203.0.113.7');
+
+  const forwarded = clientAddress({
+    headers: { 'x-forwarded-for': '198.51.100.9, 10.0.0.1' },
+    socket: { remoteAddress: '127.0.0.1' },
+  });
+  assert.equal(forwarded, '198.51.100.9', 'the client is the first entry, not the proxy');
+
+  const lan = clientAddress({ headers: {}, socket: { remoteAddress: '192.168.1.40' } });
+  assert.equal(lan, '192.168.1.40');
+
+  assert.equal(clientAddress({ headers: {}, socket: {} }), 'unknown');
+});
+
+test('two visitors behind the same tunnel are rate limited separately', () => {
+  const limiter = new AttemptLimiter({ maxPerClient: 3, lockoutMs: 60_000 });
+  const her = { headers: { 'cf-connecting-ip': '203.0.113.7' }, socket: {} };
+  const stranger = { headers: { 'cf-connecting-ip': '198.51.100.4' }, socket: {} };
+
+  for (let i = 0; i < 3; i++) limiter.fail(clientAddress(stranger));
+  assert.equal(limiter.check(clientAddress(stranger)).allowed, false);
+  assert.equal(limiter.check(clientAddress(her)).allowed, true, 'she is not locked out by a stranger');
 });

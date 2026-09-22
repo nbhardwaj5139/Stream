@@ -155,8 +155,14 @@ export class AttemptLimiter {
   }
 }
 
-// X-Forwarded-For is set by the tunnel; fall back to the socket address.
+// Behind a tunnel every request arrives from 127.0.0.1, which would collapse
+// the per-client rate limit into a single shared bucket. Cloudflare puts the
+// real visitor in CF-Connecting-IP; fall back to X-Forwarded-For, then to the
+// socket for a plain LAN connection.
 export function clientAddress(req) {
+  const cloudflare = req.headers['cf-connecting-ip'];
+  if (typeof cloudflare === 'string' && cloudflare.length) return cloudflare.trim();
+
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.length) {
     return forwarded.split(',')[0].trim();

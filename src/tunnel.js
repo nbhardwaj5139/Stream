@@ -15,6 +15,58 @@ export async function hasCloudflared() {
   }
 }
 
+// A named tunnel routes a domain you own to this machine. Unlike a quick
+// tunnel the address never changes, so the link you sent stays good forever.
+// Ingress lives in cloudflared's own config, so all we do is run it.
+export function startNamedTunnel(name, { timeoutMs = 45_000 } = {}) {
+  const child = spawn('cloudflared', ['tunnel', '--no-autoupdate', 'run', name], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let log = '';
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ url: null, named: name, stop: () => child.kill('SIGTERM'), process: child });
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGTERM');
+      reject(new Error(`cloudflared did not connect within ${Math.round(timeoutMs / 1000)}s\n${log}`));
+    }, timeoutMs);
+
+    const inspect = (chunk) => {
+      const text = chunk.toString();
+      log = (log + text).slice(-8000);
+      // cloudflared logs one of these once an edge connection is established.
+      if (/Registered tunnel connection|Connection [a-f0-9-]+ registered/i.test(text)) finish();
+    };
+
+    child.stdout.on('data', inspect);
+    child.stderr.on('data', inspect);
+
+    child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`cloudflared exited with code ${code}\n${log}`));
+    });
+  });
+}
+
 export function startTunnel(port, { timeoutMs = 45_000 } = {}) {
   const child = spawn(
     'cloudflared',
