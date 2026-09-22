@@ -136,6 +136,8 @@ if (checkOnly) {
     console.log(`  tunnel    "${tunnelName}" exists but has NO live connections`);
   } else {
     console.log(`  tunnel    "${tunnelName}" connected (${connections} edge connection(s))`);
+    if (info.id) console.log(`            id ${info.id}`);
+    console.log('            the DNS record must point at this same id');
   }
 
   console.log('\nWhat this means:\n');
@@ -164,7 +166,15 @@ if (checkOnly) {
     console.log(`  Start it with:  node bin/stream.js "<folder>" --tunnel-name ${tunnelName} --hostname ${hostname}`);
   } else {
     console.log('  Everything on this machine looks right.');
-    console.log('  If the browser still times out, something between you and Cloudflare is');
+    console.log('');
+    console.log('  If the browser shows Cloudflare error 1033, the DNS record points at a');
+    console.log('  different tunnel than the one running. That cannot be seen from here —');
+    console.log('  a tunnel record is always proxied, so DNS only ever answers with');
+    console.log(`  Cloudflare's own addresses. Re-run the setup to repoint it:`);
+    console.log('');
+    console.log(`    node bin/setup-tunnel.js ${hostname} --name ${tunnelName}`);
+    console.log('');
+    console.log('  If it times out instead, something between you and Cloudflare is');
     console.log('  blocking it — a corporate network or DNS filter is the usual cause.');
     console.log('  Try the same address from a phone on mobile data to confirm.');
   }
