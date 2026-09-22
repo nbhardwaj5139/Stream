@@ -129,3 +129,23 @@ test('stopping a share by hand clears who was sharing', () => {
   assert.equal(room.source, 'file');
   assert.equal(room.sharerId, null);
 });
+
+test('the share profile matches resolution to a sendable bitrate', async () => {
+  const { SHARE_PROFILES, shareProfile } = await import('../public/screen.js');
+
+  assert.equal(shareProfile(1080).height, 1080);
+  assert.equal(shareProfile(2160).width, 3840);
+  // Anything unrecognised lands on the default rather than breaking the share.
+  assert.equal(shareProfile(999).height, 1080);
+  assert.equal(shareProfile(undefined).height, 1080);
+
+  // Bitrate has to climb with resolution or the extra pixels are wasted on
+  // compression artefacts.
+  const heights = Object.keys(SHARE_PROFILES).map(Number).sort((a, b) => a - b);
+  for (let i = 1; i < heights.length; i++) {
+    assert.ok(
+      SHARE_PROFILES[heights[i]].bitrate > SHARE_PROFILES[heights[i - 1]].bitrate,
+      `${heights[i]} must ask for more than ${heights[i - 1]}`
+    );
+  }
+});

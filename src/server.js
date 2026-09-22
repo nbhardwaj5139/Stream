@@ -119,6 +119,8 @@ export async function createServer(options = {}) {
     // Extra ICE servers for screen sharing. Public STUN is enough for most
     // connections; a TURN relay is what gets through the ones it is not.
     iceServers = [],
+    // How tall a shared screen is sent. Higher needs upload nobody at home has.
+    shareHeight = 1080,
     rememberDevices = false,
     resetWhenEmptyMs = 90_000,
     autoPauseOnBuffer = false,
@@ -725,6 +727,7 @@ export async function createServer(options = {}) {
         encoder,
         hardwareEncoding: encoder !== 'libx264',
         iceServers,
+        shareHeight,
       },
     });
     broadcastPresence();

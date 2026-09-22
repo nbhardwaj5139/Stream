@@ -18,12 +18,27 @@ const DEFAULT_ICE_SERVERS = [
 // displaySurface 'monitor' narrows the picker to whole screens — the only
 // choice Chrome will carry audio with. Offering a window or a tab just leads
 // people to a silent film.
-const VIDEO_CONSTRAINTS = {
-  displaySurface: 'monitor',
-  frameRate: { ideal: 30, max: 60 },
-  width: { ideal: 1920 },
-  height: { ideal: 1080 },
+// What each height costs to send. Above 1080p the numbers stop being domestic
+// upload speeds, which is why 1080p is the default rather than the maximum.
+export const SHARE_PROFILES = {
+  720: { width: 1280, height: 720, bitrate: 4_000_000 },
+  1080: { width: 1920, height: 1080, bitrate: 8_000_000 },
+  1440: { width: 2560, height: 1440, bitrate: 16_000_000 },
+  2160: { width: 3840, height: 2160, bitrate: 28_000_000 },
 };
+
+export function shareProfile(height = 1080) {
+  return SHARE_PROFILES[height] ?? SHARE_PROFILES[1080];
+}
+
+function videoConstraints(profile) {
+  return {
+    displaySurface: 'monitor',
+    frameRate: { ideal: 30, max: 60 },
+    width: { ideal: profile.width },
+    height: { ideal: profile.height },
+  };
+}
 
 // Chrome-specific, and the reason the audio tick arrives already ticked.
 const PICKER_OPTIONS = {
@@ -44,7 +59,7 @@ const AUDIO_CONSTRAINTS = {
   sampleRate: 48000,
 };
 
-const TARGET_BITRATE = 8_000_000;
+
 
 // WebRTC negotiates Opus for speech by default: mono, low bitrate, with
 // discontinuous transmission that clips quiet passages. None of that suits a
@@ -71,7 +86,8 @@ export function upgradeAudio(sdp) {
 }
 
 export class ScreenShare {
-  constructor({ send, onStream, onStateChange, onEnded, iceServers = [] }) {
+  constructor({ send, onStream, onStateChange, onEnded, iceServers = [], shareHeight = 1080 }) {
+    this.profile = shareProfile(shareHeight);
     this.config = {
       iceServers: [...DEFAULT_ICE_SERVERS, ...iceServers],
       bundlePolicy: 'max-bundle',
@@ -96,9 +112,10 @@ export class ScreenShare {
     // to video rather than let the whole thing fail.
     // Best first, then give up one thing at a time. Losing the sound is a poor
     // evening; losing the picture as well is no evening at all.
+    const wanted = videoConstraints(this.profile);
     const attempts = [
-      { video: VIDEO_CONSTRAINTS, audio: AUDIO_CONSTRAINTS, ...PICKER_OPTIONS },
-      { video: VIDEO_CONSTRAINTS, audio: true, ...PICKER_OPTIONS },
+      { video: wanted, audio: AUDIO_CONSTRAINTS, ...PICKER_OPTIONS },
+      { video: wanted, audio: true, ...PICKER_OPTIONS },
       { video: { displaySurface: 'monitor' }, audio: true },
       { video: true, audio: true },
       { video: true },
@@ -156,6 +173,10 @@ export class ScreenShare {
     this.config.iceServers = [...DEFAULT_ICE_SERVERS, ...extra];
   }
 
+  setShareHeight(height) {
+    this.profile = shareProfile(height);
+  }
+
   // Whether the media is flowing directly or through a relay. Useful when a
   // connection works at home and not from abroad.
   async connectionKind(id) {
@@ -208,7 +229,9 @@ export class ScreenShare {
       if (sender.track?.kind !== 'video') continue;
       const parameters = sender.getParameters();
       parameters.degradationPreference = 'maintain-resolution';
-      parameters.encodings = [{ ...(parameters.encodings?.[0] ?? {}), maxBitrate: TARGET_BITRATE }];
+      parameters.encodings = [
+        { ...(parameters.encodings?.[0] ?? {}), maxBitrate: this.profile.bitrate },
+      ];
       try {
         await sender.setParameters(parameters);
       } catch {

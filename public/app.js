@@ -216,6 +216,7 @@ function handleMessage(message) {
       state.library = message.library ?? [];
       state.capabilities = message.capabilities ?? {};
       screenShare.setIceServers(state.capabilities.iceServers ?? []);
+      if (state.capabilities.shareHeight) screenShare.setShareHeight(state.capabilities.shareHeight);
       dom.btnRescan.hidden = state.role !== 'host';
       // Both sides use the same link, so say plainly which passcode got you in.
       dom.roleBadge.textContent = state.role === 'host' ? 'Host' : 'Guest';

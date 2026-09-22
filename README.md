@@ -214,8 +214,11 @@ screen without complaint.
 What it costs:
 
 - **Quality.** The picture is captured and re-encoded live, so it is softer than
-  the file, and dark scenes band. It is capped at 1080p — your screen is the
-  source, and a phone cannot show more anyway.
+  the file, and dark scenes band. It goes out at 1080p by default, whatever the
+  monitor is showing. `--share-quality 1440` or `2160` will send more, but the
+  ceiling is your upload, not the setting: 1080p wants about 8 Mbps sustained
+  and 4K about 28. Ask for more than the connection carries and WebRTC simply
+  drops back down, having spent the CPU for nothing.
 - **Your laptop encodes continuously** while it runs.
 - **Sound needs the right option in the picker.** On Windows, Chrome offers
   audio for **Entire Screen** and for a **Chrome Tab**, and never for a single
@@ -362,7 +365,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 130 unit and integration tests, no dependencies needed
+npm test          # 131 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright

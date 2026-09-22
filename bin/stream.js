@@ -26,6 +26,8 @@ Options
       --host-only           Only you can play/pause/seek; she just watches
       --shared-library      Let her browse your files too (default: host only)
       --room-name <text>    Heading on the passcode screen
+      --share-quality <p>   Height for a shared screen: 720, 1080, 1440 or
+                            2160 (default 1080; above that needs real upload)
       --turn <url>          TURN relay for screen sharing, e.g.
                             turn:relay.example.com:3478 (repeatable)
       --turn-user <name>    Username for the TURN relay
@@ -59,6 +61,7 @@ function parseArgs(argv) {
     controlMode: 'everyone',
     libraryMode: 'host',
     roomName: null,
+    shareHeight: 1080,
     turnUrls: [],
     turnUser: null,
     turnPass: null,
@@ -86,6 +89,7 @@ function parseArgs(argv) {
       case '--host-only': options.controlMode = 'host'; break;
       case '--shared-library': options.libraryMode = 'shared'; break;
       case '--room-name': options.roomName = argv[++i]; break;
+      case '--share-quality': options.shareHeight = Number(String(argv[++i]).replace(/p$/i, '')); break;
       case '--turn': options.turnUrls.push(argv[++i]); break;
       case '--turn-user': options.turnUser = argv[++i]; break;
       case '--turn-pass': options.turnPass = argv[++i]; break;
@@ -104,6 +108,10 @@ function parseArgs(argv) {
     }
   }
 
+  if (![720, 1080, 1440, 2160].includes(options.shareHeight)) {
+    console.error(`--share-quality must be 720, 1080, 1440 or 2160 (got ${options.shareHeight})`);
+    process.exit(1);
+  }
   if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
     console.error(`Invalid port: ${options.port}`);
     process.exit(1);
@@ -230,6 +238,7 @@ const server = await createServer({
   controlMode: options.controlMode,
   libraryMode: options.libraryMode,
   ...(options.roomName ? { roomName: options.roomName } : {}),
+  shareHeight: options.shareHeight,
   iceServers: options.turnUrls.length
     ? [
         {
