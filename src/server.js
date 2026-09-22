@@ -2,19 +2,29 @@ import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-import { Library, publicDescription, mimeForFile, detectFfmpeg } from './media.js';
+import { Library, publicDescription, mimeForFile, detectFfmpeg, suggestedQuality } from './media.js';
 import { readSubtitleAsVtt, extractEmbeddedSubtitle } from './subtitles.js';
-import { startTranscode } from './transcode.js';
+import { startTranscode, detectCapabilities, pickEncoder } from './transcode.js';
 import { Room } from './room.js';
 import { attachWebSocketServer } from './ws.js';
-import { createAuthenticator, generateToken } from './auth.js';
+import {
+  AttemptLimiter,
+  clientAddress,
+  generateToken,
+  hashPasscode,
+  parseCookies,
+  signSession,
+  verifyPasscode,
+  verifySession,
+} from './auth.js';
 import { parseRange } from './range.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
-const COOKIE_NAME = 'stream_key';
+const COOKIE_NAME = 'stream_session';
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_BODY_BYTES = 4096;
 
 const STATIC_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -23,15 +33,15 @@ const STATIC_TYPES = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.png': 'image/png',
-  '.webmanifest': 'application/manifest+json',
 };
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, headers = {}) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
     'cache-control': 'no-store',
+    ...headers,
   });
   res.end(payload);
 }
@@ -44,22 +54,64 @@ function sendText(res, status, body) {
   res.end(body);
 }
 
+function readJsonBody(req) {
+  return new Promise((resolve) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        req.destroy();
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch {
+        resolve(null);
+      }
+    });
+    req.on('error', () => resolve(null));
+  });
+}
+
 export async function createServer(options = {}) {
   const {
     roots = [process.cwd()],
-    hostKey = generateToken(),
-    guestKey = generateToken(),
+    hostPasscode,
+    guestPasscode,
+    sessionSecret = generateToken(32),
     controlMode = 'everyone',
     autoPauseOnBuffer = true,
     allowTranscode = true,
+    preferSoftwareEncoder = false,
+    limiter = new AttemptLimiter(),
   } = options;
+
+  if (!hostPasscode || !guestPasscode) {
+    throw new Error('hostPasscode and guestPasscode are required');
+  }
+  if (hostPasscode === guestPasscode) {
+    throw new Error('the host and guest passcodes must be different');
+  }
+
+  const passcodes = {
+    host: hashPasscode(hostPasscode),
+    guest: hashPasscode(guestPasscode),
+  };
 
   const library = new Library(roots);
   await library.scan();
 
   const room = new Room({ controlMode, autoPauseOnBuffer });
-  const authenticate = createAuthenticator({ hostKey, guestKey, cookieName: COOKIE_NAME });
   const ffmpeg = await detectFfmpeg();
+  const encoding = ffmpeg.ffmpeg
+    ? await detectCapabilities()
+    : { encoders: [], canToneMap: false };
+  const encoder = pickEncoder(encoding.encoders, { preferSoftware: preferSoftwareEncoder });
 
   const connections = new Map(); // viewerId -> WebSocketConnection
 
@@ -70,12 +122,55 @@ export async function createServer(options = {}) {
     }
   }
 
-  function broadcastState() {
-    broadcast(room.snapshot());
+  const broadcastState = () => broadcast(room.snapshot());
+  const broadcastPresence = () => broadcast(room.presence());
+
+  // ---------------------------------------------------------------- auth ---
+
+  function identify(req) {
+    const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
+    return verifySession(sessionSecret, token);
   }
 
-  function broadcastPresence() {
-    broadcast(room.presence());
+  function sessionCookie(req, payload) {
+    const token = signSession(sessionSecret, payload);
+    // The tunnel terminates TLS and tells us so; mark the cookie Secure there.
+    const secure = req.headers['x-forwarded-proto'] === 'https' ? ' Secure;' : '';
+    return `${COOKIE_NAME}=${token}; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}; SameSite=Lax; HttpOnly;${secure}`;
+  }
+
+  async function handleJoin(req, res) {
+    const address = clientAddress(req);
+    const gate = limiter.check(address);
+    if (!gate.allowed) {
+      const seconds = Math.ceil(gate.retryAfterMs / 1000);
+      sendJson(res, 429, { error: `Too many attempts. Try again in ${Math.ceil(seconds / 60)} minutes.` }, {
+        'retry-after': String(seconds),
+      });
+      return;
+    }
+
+    const body = await readJsonBody(req);
+    const submitted = typeof body?.passcode === 'string' ? body.passcode.trim() : '';
+    const name = typeof body?.name === 'string' ? body.name : '';
+
+    // Check both, in a fixed order, so timing doesn't reveal which one matched.
+    const isHost = verifyPasscode(submitted, passcodes.host);
+    const isGuest = verifyPasscode(submitted, passcodes.guest);
+
+    if (!isHost && !isGuest) {
+      limiter.fail(address);
+      sendJson(res, 401, { error: 'That passcode is not right.' });
+      return;
+    }
+
+    limiter.succeed(address);
+    const payload = {
+      role: isHost ? 'host' : 'guest',
+      name: name.slice(0, 40),
+      expiresAt: Date.now() + SESSION_TTL_MS,
+    };
+    sendJson(res, 200, { role: payload.role }, { 'set-cookie': sessionCookie(req, payload) });
   }
 
   // ---------------------------------------------------------------- HTTP ---
@@ -138,10 +233,7 @@ export async function createServer(options = {}) {
 
     const range = parseRange(rangeHeader, stat.size);
     if (!range || range.invalid) {
-      res.writeHead(416, {
-        'content-range': `bytes */${stat.size}`,
-        'content-type': 'text/plain',
-      });
+      res.writeHead(416, { 'content-range': `bytes */${stat.size}`, 'content-type': 'text/plain' });
       res.end('Range not satisfiable');
       return;
     }
@@ -171,9 +263,8 @@ export async function createServer(options = {}) {
 
     const startSeconds = Math.max(0, Number(url.searchParams.get('start')) || 0);
     const audioTrack = Math.max(0, Number(url.searchParams.get('track')) || 0);
-    const quality = url.searchParams.get('quality') ?? 'medium';
-    const maxHeightParam = Number(url.searchParams.get('maxHeight'));
-    const maxHeight = Number.isFinite(maxHeightParam) && maxHeightParam > 0 ? maxHeightParam : null;
+    const requested = url.searchParams.get('quality');
+    const quality = ['low', 'medium', 'high', 'original'].includes(requested) ? requested : 'original';
 
     res.writeHead(200, {
       'content-type': 'video/mp4',
@@ -181,6 +272,7 @@ export async function createServer(options = {}) {
       // Length is unknown while ffmpeg is still running; no seeking by range.
       'accept-ranges': 'none',
       'x-stream-start': String(startSeconds),
+      'x-stream-encoder': encoder,
     });
     if (req.method === 'HEAD') {
       res.end();
@@ -192,8 +284,9 @@ export async function createServer(options = {}) {
       startSeconds,
       info: item.info,
       audioTrack,
-      quality: quality === 'original' ? 'high' : quality,
-      maxHeight,
+      quality,
+      encoder,
+      canToneMap: encoding.canToneMap,
     });
 
     job.stdout.pipe(res);
@@ -204,7 +297,7 @@ export async function createServer(options = {}) {
       }
       if (!res.writableEnded) res.end();
     });
-    // Browser closed the tab or seeked: stop burning CPU immediately.
+    // Browser closed the tab or seeked: stop burning the GPU immediately.
     res.on('close', () => job.stop());
   }
 
@@ -268,7 +361,6 @@ export async function createServer(options = {}) {
       return;
     }
 
-    // Static assets carry no secrets and the sign-in page needs them.
     if (pathname.startsWith('/static/')) {
       await serveStatic(req, res, pathname.slice('/static/'.length));
       return;
@@ -277,36 +369,35 @@ export async function createServer(options = {}) {
       sendJson(res, 200, { ok: true, files: library.items.size });
       return;
     }
-
-    const identity = authenticate(req, url);
-
-    if (pathname === '/' || pathname === '/index.html') {
-      if (!identity) {
-        await serveStatic(req, res, 'locked.html');
-        return;
-      }
-      // Remember the key so <video src> and reloads don't need it in the URL.
-      res.setHeader(
-        'set-cookie',
-        `${COOKIE_NAME}=${encodeURIComponent(identity.key)}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly`
-      );
-      await serveStatic(req, res, 'index.html');
+    if (pathname === '/api/join' && req.method === 'POST') {
+      await handleJoin(req, res);
       return;
     }
 
-    if (!identity) {
+    const session = identify(req);
+
+    // The room door: no session yet means the passcode page, not an error.
+    if (pathname === '/' || pathname === '/index.html') {
+      await serveStatic(req, res, session ? 'index.html' : 'join.html');
+      return;
+    }
+
+    if (!session) {
       sendJson(res, 401, { error: 'unauthorized' });
       return;
     }
 
     if (pathname === '/api/session') {
       sendJson(res, 200, {
-        role: identity.role,
+        role: session.role,
+        name: session.name ?? '',
         controlMode: room.controlMode,
         ffmpeg: ffmpeg.ffmpeg,
         ffprobe: ffmpeg.ffprobe,
-        roots: identity.role === 'host' ? library.roots : undefined,
-        guestLinkKey: identity.role === 'host' ? guestKey : undefined,
+        encoder,
+        hardwareEncoding: encoder !== 'libx264',
+        canToneMap: encoding.canToneMap,
+        roots: session.role === 'host' ? library.roots : undefined,
       });
       return;
     }
@@ -316,8 +407,15 @@ export async function createServer(options = {}) {
       return;
     }
 
+    if (pathname === '/api/logout' && req.method === 'POST') {
+      sendJson(res, 200, { ok: true }, {
+        'set-cookie': `${COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly`,
+      });
+      return;
+    }
+
     if (pathname === '/api/rescan' && req.method === 'POST') {
-      if (identity.role !== 'host') {
+      if (session.role !== 'host') {
         sendJson(res, 403, { error: 'host only' });
         return;
       }
@@ -377,14 +475,14 @@ export async function createServer(options = {}) {
 
   const wss = attachWebSocketServer(server, {
     path: '/ws',
-    authorize: (req, url) => {
-      const identity = authenticate(req, url);
-      return identity ? { role: identity.role } : false;
+    authorize: (req) => {
+      const session = identify(req);
+      return session ? { role: session.role, name: session.name } : false;
     },
   });
 
   wss.on('connection', (connection) => {
-    const viewer = room.addViewer({ role: connection.data.role });
+    const viewer = room.addViewer({ role: connection.data.role, name: connection.data.name });
     connection.data.viewerId = viewer.id;
     connections.set(viewer.id, connection);
 
@@ -394,7 +492,12 @@ export async function createServer(options = {}) {
       state: room.snapshot(),
       chat: room.chat,
       library: library.list(),
-      capabilities: { ffmpeg: ffmpeg.ffmpeg, ffprobe: ffmpeg.ffprobe },
+      capabilities: {
+        ffmpeg: ffmpeg.ffmpeg,
+        ffprobe: ffmpeg.ffprobe,
+        encoder,
+        hardwareEncoding: encoder !== 'libx264',
+      },
     });
     broadcastPresence();
 
@@ -418,11 +521,14 @@ export async function createServer(options = {}) {
         case 'control': {
           const result = room.applyControl(self, message);
           if (result.changed) {
-            broadcastState();
             if (result.reason === 'select') {
               const item = await library.describe(room.mediaId);
+              // A 4K remux is "original quality" nobody can receive; start the
+              // room at something the link can actually carry.
+              room.quality = suggestedQuality(item?.info);
               broadcast({ type: 'media', media: publicDescription(item) });
             }
+            broadcastState();
           } else if (result.reason === 'not-allowed') {
             connection.send({ type: 'error', error: 'Only the host can control playback in this room.' });
           }
@@ -439,15 +545,6 @@ export async function createServer(options = {}) {
         case 'chat': {
           const entry = room.addChat(self, message.text);
           if (entry) broadcast({ type: 'chat', entry });
-          break;
-        }
-
-        case 'signal': {
-          // WebRTC offer/answer/ICE relay for screen-share mode.
-          const target = connections.get(message.to);
-          if (target) {
-            target.send({ type: 'signal', from: self.id, data: message.data });
-          }
           break;
         }
 
@@ -483,7 +580,6 @@ export async function createServer(options = {}) {
 
   server.library = library;
   server.room = room;
-  server.keys = { hostKey, guestKey };
-  server.capabilities = ffmpeg;
+  server.capabilities = { ...ffmpeg, ...encoding, encoder };
   return server;
 }

@@ -3,77 +3,66 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createServer } from '../src/server.js';
-import { generateToken } from '../src/auth.js';
+import { generatePasscode, generateToken } from '../src/auth.js';
 import { hasCloudflared, startTunnel } from '../src/tunnel.js';
 
+const CONFIG_PATH = path.join(os.homedir(), '.stream-room.json');
+
 const USAGE = `
-stream — watch movies on your laptop together with someone far away
+stream — watch the movies on your disk with someone far away
 
 Usage
   node bin/stream.js [options] [media-folder ...]
 
 Options
-  -d, --dir <path>       Folder to serve (repeatable; default ~/Movies or cwd)
-  -p, --port <number>    Port to listen on (default 8420)
-      --host-only        Only you can play/pause/seek; guests just watch
-      --no-tunnel        Don't start a public tunnel; LAN / your own tunnel only
-      --no-auto-pause    Don't pause everyone when one side is buffering
-      --no-transcode     Never invoke ffmpeg, even for files browsers can't play
-      --host-key <key>   Reuse a fixed host key (keeps your link stable)
-      --guest-key <key>  Reuse a fixed guest key (keeps their link stable)
-  -h, --help             Show this help
+  -d, --dir <path>          Folder to serve (repeatable; default ~/Movies or ~/Videos)
+  -p, --port <number>       Port to listen on (default 8420)
+      --passcode <code>     Set her passcode instead of generating one
+      --host-passcode <code>  Set your own passcode
+      --new-passcodes       Throw away the saved passcodes and make new ones
+      --host-only           Only you can play/pause/seek; she just watches
+      --no-tunnel           Don't create a public link (same Wi-Fi only)
+      --no-auto-pause       Don't pause everyone when one side is buffering
+      --no-transcode        Never invoke ffmpeg
+      --software-encoding   Force CPU encoding even if a GPU encoder exists
+  -h, --help                Show this help
 
 Examples
-  node bin/stream.js ~/Movies
-  node bin/stream.js -d ~/Movies -d /Volumes/Media/Films --host-only
+  node bin/stream.js "D:\\Movies"
+  node bin/stream.js -d "D:\\Movies" -d "E:\\Films" --passcode POPCORN
 `.trim();
 
 function parseArgs(argv) {
   const options = {
     dirs: [],
     port: Number(process.env.PORT) || 8420,
+    passcode: null,
+    hostPasscode: null,
+    newPasscodes: false,
     controlMode: 'everyone',
     tunnel: true,
     autoPauseOnBuffer: true,
     allowTranscode: true,
-    hostKey: process.env.STREAM_HOST_KEY || null,
-    guestKey: process.env.STREAM_GUEST_KEY || null,
+    preferSoftwareEncoder: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     switch (arg) {
-      case '-h':
-      case '--help':
+      case '-h': case '--help':
         console.log(USAGE);
         process.exit(0);
         break;
-      case '-d':
-      case '--dir':
-        options.dirs.push(argv[++i]);
-        break;
-      case '-p':
-      case '--port':
-        options.port = Number(argv[++i]);
-        break;
-      case '--host-only':
-        options.controlMode = 'host';
-        break;
-      case '--no-tunnel':
-        options.tunnel = false;
-        break;
-      case '--no-auto-pause':
-        options.autoPauseOnBuffer = false;
-        break;
-      case '--no-transcode':
-        options.allowTranscode = false;
-        break;
-      case '--host-key':
-        options.hostKey = argv[++i];
-        break;
-      case '--guest-key':
-        options.guestKey = argv[++i];
-        break;
+      case '-d': case '--dir': options.dirs.push(argv[++i]); break;
+      case '-p': case '--port': options.port = Number(argv[++i]); break;
+      case '--passcode': options.passcode = argv[++i]; break;
+      case '--host-passcode': options.hostPasscode = argv[++i]; break;
+      case '--new-passcodes': options.newPasscodes = true; break;
+      case '--host-only': options.controlMode = 'host'; break;
+      case '--no-tunnel': options.tunnel = false; break;
+      case '--no-auto-pause': options.autoPauseOnBuffer = false; break;
+      case '--no-transcode': options.allowTranscode = false; break;
+      case '--software-encoding': options.preferSoftwareEncoder = true; break;
       default:
         if (arg.startsWith('-')) {
           console.error(`Unknown option: ${arg}\n`);
@@ -89,6 +78,24 @@ function parseArgs(argv) {
     process.exit(1);
   }
   return options;
+}
+
+// Passcodes survive restarts, so you don't have to text her a new one every
+// time your laptop reboots.
+function loadConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveConfig(config) {
+  try {
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
+  } catch (error) {
+    console.warn(`Could not save passcodes to ${CONFIG_PATH}: ${error.message}`);
+  }
 }
 
 function defaultDirectories() {
@@ -111,9 +118,7 @@ function localAddresses(port) {
   const addresses = [];
   for (const interfaces of Object.values(os.networkInterfaces())) {
     for (const entry of interfaces ?? []) {
-      if (entry.family === 'IPv4' && !entry.internal) {
-        addresses.push(`http://${entry.address}:${port}`);
-      }
+      if (entry.family === 'IPv4' && !entry.internal) addresses.push(`http://${entry.address}:${port}`);
     }
   }
   return addresses;
@@ -121,7 +126,7 @@ function localAddresses(port) {
 
 const options = parseArgs(process.argv.slice(2));
 const roots = (options.dirs.length ? options.dirs : defaultDirectories()).map((dir) =>
-  path.resolve(dir.replace(/^~(?=$|\/)/, os.homedir()))
+  path.resolve(dir.replace(/^~(?=$|[/\\])/, os.homedir()))
 );
 
 for (const root of roots) {
@@ -131,17 +136,28 @@ for (const root of roots) {
   }
 }
 
-const hostKey = options.hostKey || generateToken();
-const guestKey = options.guestKey || generateToken();
+const saved = options.newPasscodes ? {} : loadConfig();
+const hostPasscode = options.hostPasscode ?? saved.hostPasscode ?? generatePasscode();
+const guestPasscode = options.passcode ?? saved.guestPasscode ?? generatePasscode();
+const sessionSecret = saved.sessionSecret ?? generateToken(32);
+
+if (hostPasscode === guestPasscode) {
+  console.error('Your passcode and hers must be different.');
+  process.exit(1);
+}
+
+saveConfig({ hostPasscode, guestPasscode, sessionSecret });
 
 console.log('Scanning for video files...');
 const server = await createServer({
   roots,
-  hostKey,
-  guestKey,
+  hostPasscode,
+  guestPasscode,
+  sessionSecret,
   controlMode: options.controlMode,
   autoPauseOnBuffer: options.autoPauseOnBuffer,
   allowTranscode: options.allowTranscode,
+  preferSoftwareEncoder: options.preferSoftwareEncoder,
 });
 
 await new Promise((resolve, reject) => {
@@ -155,15 +171,23 @@ for (const root of roots) console.log(`  ${root}`);
 
 if (!server.capabilities.ffmpeg) {
   console.log(
-    '\nffmpeg was not found. .mp4/.webm files will still work, but .mkv/.avi and\n' +
-      'HEVC/AC3 files will not play. Install ffmpeg to cover those.'
+    '\n  ffmpeg was not found. .mp4 files will still work, but .mkv, .avi and\n' +
+      '  anything 4K or HEVC will not play. Install it first:\n' +
+      '    winget install Gyan.FFmpeg'
   );
+} else if (server.capabilities.encoder === 'libx264') {
+  console.log(
+    '\n  No GPU encoder found, so 4K files will be re-encoded on the CPU.\n' +
+      '  That is slow and may stutter. 1080p files are unaffected.'
+  );
+} else {
+  console.log(`\n  Using ${server.capabilities.encoder} for 4K re-encoding (GPU accelerated).`);
 }
 
 let tunnel = null;
 if (options.tunnel) {
   if (await hasCloudflared()) {
-    process.stdout.write('\nStarting public tunnel... ');
+    process.stdout.write('\nStarting public link... ');
     try {
       tunnel = await startTunnel(options.port);
       console.log('done');
@@ -172,30 +196,31 @@ if (options.tunnel) {
     }
   } else {
     console.log(
-      '\ncloudflared is not installed, so no public link was created.\n' +
-        '  macOS:   brew install cloudflared\n' +
-        '  Windows: winget install --id Cloudflare.cloudflared\n' +
-        '  Linux:   https://github.com/cloudflare/cloudflared/releases\n' +
-        'Without it you can still watch together over the same Wi-Fi.'
+      '\ncloudflared is not installed, so there is no public link.\n' +
+        '  winget install Cloudflare.cloudflared\n' +
+        'Without it you can still watch together on the same Wi-Fi.'
     );
   }
 }
 
 const base = tunnel?.url ?? `http://localhost:${options.port}`;
-console.log('\n' + '─'.repeat(64));
-console.log(`  Your link:   ${base}/?k=${hostKey}`);
-console.log(`  Their link:  ${base}/?k=${guestKey}`);
-console.log('─'.repeat(64));
+console.log('\n' + '─'.repeat(62));
+console.log('  Send her this link and this passcode:');
+console.log(`\n    ${base}`);
+console.log(`    passcode:  ${guestPasscode}`);
+console.log(`\n  Your own passcode (same link):  ${hostPasscode}`);
+console.log('─'.repeat(62));
+
 if (!tunnel) {
   const lan = localAddresses(options.port);
   if (lan.length) {
-    console.log('On the same Wi-Fi they can also use:');
-    for (const address of lan) console.log(`  ${address}/?k=${guestKey}`);
+    console.log('On the same Wi-Fi she can also use:');
+    for (const address of lan) console.log(`  ${address}`);
   }
 }
-console.log(
-  `\nControl: ${options.controlMode === 'host' ? 'only you' : 'either of you'} can play, pause and seek.`
-);
+
+console.log(`\nControl: ${options.controlMode === 'host' ? 'only you' : 'either of you'} can play, pause and seek.`);
+console.log(`Passcodes are saved in ${CONFIG_PATH} and reused next time.`);
 console.log('Press Ctrl+C to stop.\n');
 
 let shuttingDown = false;

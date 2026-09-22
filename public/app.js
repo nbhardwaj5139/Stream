@@ -20,11 +20,9 @@ const dom = {
   qualityWrap: el('quality-wrap'),
   quality: el('quality'),
   btnResync: el('btn-resync'),
-  btnShareScreen: el('btn-share-screen'),
   btnLibrary: el('btn-library'),
   btnPanel: el('btn-panel'),
   btnPanelClose: el('btn-panel-close'),
-  panel: el('panel'),
   presence: el('presence'),
   chat: el('chat'),
   composer: el('composer'),
@@ -45,6 +43,7 @@ const state = {
   media: null,
   room: null,
   viewers: [],
+  capabilities: {},
   clockOffset: 0,   // serverTime - clientTime
   bestRtt: Infinity,
   socket: null,
@@ -53,19 +52,12 @@ const state = {
   startOffset: 0,   // transcoded streams begin partway into the movie
   needsGesture: false,
   buffering: false,
-  lastReportedBuffering: null,
-  screenStream: null,
-  peers: new Map(),
   filter: '',
 };
 
-const key = new URL(location.href).searchParams.get('k') ?? '';
-
 // ------------------------------------------------------------------ misc --
 
-function serverNow() {
-  return Date.now() + state.clockOffset;
-}
+const serverNow = () => Date.now() + state.clockOffset;
 
 function formatDuration(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
@@ -89,8 +81,16 @@ function formatSize(bytes) {
   return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function resolutionLabel(height) {
+  if (!height) return '';
+  if (height >= 2000) return '4K';
+  if (height >= 1000) return '1080p';
+  if (height >= 700) return '720p';
+  return `${height}p`;
+}
+
 let toastTimer = null;
-function toast(text, ms = 3200) {
+function toast(text, ms = 3600) {
   dom.toast.textContent = text;
   dom.toast.hidden = false;
   clearTimeout(toastTimer);
@@ -105,14 +105,11 @@ function flash(text, ms = 2200) {
   nudgeTimer = setTimeout(() => { dom.nudge.hidden = true; }, ms);
 }
 
-function showOverlay(text) {
+const showOverlay = (text) => {
   dom.overlayText.textContent = text;
   dom.overlay.hidden = false;
-}
-
-function hideOverlay() {
-  dom.overlay.hidden = true;
-}
+};
+const hideOverlay = () => { dom.overlay.hidden = true; };
 
 // --------------------------------------------------------------- network --
 
@@ -124,16 +121,13 @@ function send(message) {
   return false;
 }
 
-function control(action, extra = {}) {
-  send({ type: 'control', action, ...extra });
-}
+const control = (action, extra = {}) => send({ type: 'control', action, ...extra });
 
 let reconnectDelay = 500;
 
 function connect() {
   const url = new URL('/ws', location.href);
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  if (key) url.searchParams.set('k', key);
 
   const socket = new WebSocket(url);
   state.socket = socket;
@@ -157,16 +151,28 @@ function connect() {
     handleMessage(message);
   });
 
-  socket.addEventListener('close', () => {
+  socket.addEventListener('close', async () => {
     state.connected = false;
     updateSyncBadge();
-    for (const peer of state.peers.values()) peer.close();
-    state.peers.clear();
+    // A session that expired can't be fixed by retrying; send them to the door.
+    if (await sessionExpired()) {
+      location.reload();
+      return;
+    }
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 10_000);
   });
 
   socket.addEventListener('error', () => socket.close());
+}
+
+async function sessionExpired() {
+  try {
+    const response = await fetch('/api/session', { credentials: 'same-origin' });
+    return response.status === 401;
+  } catch {
+    return false;
+  }
 }
 
 // Sample the round trip a few times and keep the fastest: the fastest sample
@@ -187,11 +193,12 @@ function handleMessage(message) {
       state.me = message.you;
       state.role = message.you.role;
       state.library = message.library ?? [];
-      dom.btnShareScreen.hidden = state.role !== 'host' || !navigator.mediaDevices?.getDisplayMedia;
+      state.capabilities = message.capabilities ?? {};
       dom.btnRescan.hidden = state.role !== 'host';
       renderLibrary();
       for (const entry of message.chat ?? []) appendChat(entry, { quiet: true });
       applyState(message.state, { initial: true });
+      warnAboutEncoding();
       break;
 
     case 'pong': {
@@ -221,10 +228,6 @@ function handleMessage(message) {
       appendChat(message.entry);
       break;
 
-    case 'signal':
-      handleSignal(message).catch((error) => console.warn('signal failed', error));
-      break;
-
     case 'error':
       toast(message.error);
       break;
@@ -234,11 +237,18 @@ function handleMessage(message) {
   }
 }
 
+function warnAboutEncoding() {
+  if (state.role !== 'host') return;
+  if (!state.capabilities.ffmpeg) {
+    toast('ffmpeg was not found, so .mkv and 4K files will not play. Install it and restart.', 8000);
+  } else if (!state.capabilities.hardwareEncoding) {
+    toast('No GPU encoder found — 4K files will re-encode on the CPU and may stutter.', 8000);
+  }
+}
+
 // ---------------------------------------------------------------- player --
 
-function currentPosition() {
-  return state.startOffset + (dom.video.currentTime || 0);
-}
+const currentPosition = () => state.startOffset + (dom.video.currentTime || 0);
 
 // Where the room says we should be, projected to this instant.
 function targetPosition(room = state.room) {
@@ -248,30 +258,29 @@ function targetPosition(room = state.room) {
   return Math.max(0, room.position + elapsed * room.rate);
 }
 
-// Only the transcoder can change resolution; direct streams are sent as-is.
-const MAX_HEIGHT_BY_QUALITY = { original: null, high: 1080, medium: 720, low: 480 };
+// Original quality means the untouched file; anything else goes via ffmpeg.
+function usesTranscoder(media = state.media, quality = state.room?.quality) {
+  if (!media) return false;
+  if (media.deliveryMode === 'transcode') return true;
+  return quality !== 'original';
+}
 
 function streamUrl(media, startSeconds) {
   if (!media) return null;
-  const url = new URL(
-    media.deliveryMode === 'transcode' ? `/transcode/${media.id}` : `/stream/${media.id}`,
-    location.href
-  );
-  if (media.deliveryMode === 'transcode') {
+  const transcoding = usesTranscoder(media);
+  const url = new URL(transcoding ? `/transcode/${media.id}` : `/stream/${media.id}`, location.href);
+  if (transcoding) {
     if (startSeconds > 0) url.searchParams.set('start', String(Math.floor(startSeconds)));
     if (state.room?.audioTrack) url.searchParams.set('track', String(state.room.audioTrack));
-    const quality = state.room?.quality ?? 'medium';
-    url.searchParams.set('quality', quality);
-    const maxHeight = MAX_HEIGHT_BY_QUALITY[quality];
-    if (maxHeight) url.searchParams.set('maxHeight', String(maxHeight));
+    url.searchParams.set('quality', state.room?.quality ?? 'original');
   }
-  if (key) url.searchParams.set('k', key);
   return url.toString();
 }
 
 function loadMedia(media, startSeconds = 0) {
   if (!media) return;
-  state.startOffset = media.deliveryMode === 'transcode' ? Math.floor(startSeconds) : 0;
+  const transcoding = usesTranscoder(media);
+  state.startOffset = transcoding ? Math.floor(startSeconds) : 0;
 
   dom.video.hidden = false;
   dom.placeholder.hidden = true;
@@ -279,7 +288,7 @@ function loadMedia(media, startSeconds = 0) {
   dom.video.load();
 
   // Direct streams can seek freely; transcodes start at the requested point.
-  if (media.deliveryMode !== 'transcode' && startSeconds > 0) {
+  if (!transcoding && startSeconds > 0) {
     const seekWhenReady = () => {
       dom.video.currentTime = startSeconds;
       dom.video.removeEventListener('loadedmetadata', seekWhenReady);
@@ -297,9 +306,7 @@ function renderSubtitleTracks(media) {
     const track = document.createElement('track');
     track.kind = 'subtitles';
     track.label = subtitle.label;
-    const url = new URL(`/subtitles/${media.id}/${subtitle.id}.vtt`, location.href);
-    if (key) url.searchParams.set('k', key);
-    track.src = url.toString();
+    track.src = `/subtitles/${media.id}/${subtitle.id}.vtt`;
     dom.video.append(track);
   }
 }
@@ -310,7 +317,7 @@ function seekLocal(position) {
   const media = state.media;
   if (!media) return;
 
-  if (media.deliveryMode === 'transcode') {
+  if (usesTranscoder(media)) {
     const relative = position - state.startOffset;
     const buffered = dom.video.buffered;
     let covered = false;
@@ -344,17 +351,11 @@ function applyState(room, { initial = false } = {}) {
   const previous = state.room;
   state.room = room;
 
-  if (room.source === 'screen') {
-    applyScreenMode(previous);
-    updateSyncBadge();
-    return;
-  }
-
-  const mediaChanged = !previous || previous.mediaId !== room.mediaId || previous.source !== room.source;
+  const mediaChanged = !previous || previous.mediaId !== room.mediaId;
   const encodingChanged =
     previous &&
     !mediaChanged &&
-    state.media?.deliveryMode === 'transcode' &&
+    state.media &&
     (previous.quality !== room.quality || previous.audioTrack !== room.audioTrack);
 
   if (!room.mediaId) {
@@ -392,9 +393,7 @@ function applyState(room, { initial = false } = {}) {
 }
 
 async function fetchMedia(id) {
-  const url = new URL(`/api/media/${id}`, location.href);
-  if (key) url.searchParams.set('k', key);
-  const response = await fetch(url, { credentials: 'same-origin' });
+  const response = await fetch(`/api/media/${id}`, { credentials: 'same-origin' });
   if (!response.ok) {
     toast('That file could not be opened.');
     return null;
@@ -404,7 +403,7 @@ async function fetchMedia(id) {
 
 function syncToRoom({ force = false } = {}) {
   const room = state.room;
-  if (!room || room.source !== 'file' || !state.media) return;
+  if (!room || !state.media) return;
 
   const target = targetPosition();
   const drift = currentPosition() - target;
@@ -447,11 +446,6 @@ function updateSyncBadge() {
     dom.syncBadge.dataset.state = 'offline';
     return;
   }
-  if (state.room?.source === 'screen') {
-    dom.syncBadge.textContent = 'screen share';
-    dom.syncBadge.dataset.state = 'ok';
-    return;
-  }
   if (!state.media) {
     dom.syncBadge.textContent = 'connected';
     dom.syncBadge.dataset.state = 'ok';
@@ -467,150 +461,26 @@ function updateSyncBadge() {
   }
 }
 
-// ----------------------------------------------------------- screen share --
-
-const RTC_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:global.stun.twilio.com:3478' },
-  ],
-};
-
-function applyScreenMode(previous) {
-  dom.video.hidden = false;
-  dom.placeholder.hidden = true;
-  if (previous?.source !== 'screen') {
-    dom.video.removeAttribute('src');
-    dom.video.srcObject = null;
-    if (state.role !== 'host') showOverlay('Connecting to the shared screen…');
-  }
-  dom.nowPlaying.textContent = state.role === 'host' ? 'Sharing your screen' : 'Watching shared screen';
-}
-
-function createPeer(remoteId) {
-  const peer = new RTCPeerConnection(RTC_CONFIG);
-  state.peers.set(remoteId, peer);
-
-  peer.addEventListener('icecandidate', (event) => {
-    if (event.candidate) {
-      send({ type: 'signal', to: remoteId, data: { candidate: event.candidate } });
-    }
-  });
-
-  peer.addEventListener('connectionstatechange', () => {
-    if (['failed', 'closed'].includes(peer.connectionState)) {
-      peer.close();
-      state.peers.delete(remoteId);
-      if (state.role !== 'host' && state.room?.source === 'screen') {
-        showOverlay('Lost the screen share. Trying again…');
-      }
-    }
-  });
-
-  peer.addEventListener('track', (event) => {
-    dom.video.srcObject = event.streams[0];
-    dom.video.muted = false;
-    hideOverlay();
-    playVideo();
-  });
-
-  return peer;
-}
-
-async function handleSignal({ from, data }) {
-  let peer = state.peers.get(from);
-
-  if (data.sdp) {
-    if (!peer) peer = createPeer(from);
-    await peer.setRemoteDescription(new RTCSessionDescription(data.sdp));
-    if (data.sdp.type === 'offer') {
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      send({ type: 'signal', to: from, data: { sdp: peer.localDescription } });
-    }
-    return;
-  }
-
-  if (data.candidate && peer) {
-    try {
-      await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
-    } catch {
-      /* candidates can arrive before the description; safe to drop */
-    }
-  }
-}
-
-async function offerTo(viewerId) {
-  if (!state.screenStream || viewerId === state.me?.id) return;
-  const peer = createPeer(viewerId);
-  for (const track of state.screenStream.getTracks()) {
-    peer.addTrack(track, state.screenStream);
-  }
-  const offer = await peer.createOffer();
-  await peer.setLocalDescription(offer);
-  send({ type: 'signal', to: viewerId, data: { sdp: peer.localDescription } });
-}
-
-async function startScreenShare() {
-  try {
-    state.screenStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 30, max: 60 } },
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-    });
-  } catch {
-    toast('Screen share was cancelled.');
-    return;
-  }
-
-  if (state.screenStream.getAudioTracks().length === 0) {
-    toast('No audio was captured. In Chrome, tick "Share tab audio" when choosing what to share.', 6000);
-  }
-
-  state.screenStream.getVideoTracks()[0]?.addEventListener('ended', stopScreenShare);
-
-  dom.btnShareScreen.textContent = 'Stop sharing';
-  dom.btnShareScreen.setAttribute('aria-pressed', 'true');
-  control('source', { source: 'screen' });
-
-  // Show the host their own feed, muted to avoid a feedback loop.
-  dom.video.srcObject = state.screenStream;
-  dom.video.muted = true;
-  dom.video.hidden = false;
-  dom.placeholder.hidden = true;
-  playVideo();
-
-  for (const viewer of state.viewers) {
-    if (viewer.id !== state.me?.id) offerTo(viewer.id);
-  }
-}
-
-function stopScreenShare() {
-  for (const track of state.screenStream?.getTracks() ?? []) track.stop();
-  state.screenStream = null;
-  for (const peer of state.peers.values()) peer.close();
-  state.peers.clear();
-  dom.video.srcObject = null;
-  dom.video.muted = false;
-  dom.btnShareScreen.textContent = 'Share screen';
-  dom.btnShareScreen.setAttribute('aria-pressed', 'false');
-  control('source', { source: 'file' });
-}
-
 // ---------------------------------------------------------------- render --
 
 function renderQuality() {
-  const transcoding = state.media?.deliveryMode === 'transcode';
-  dom.qualityWrap.hidden = !transcoding;
-  if (transcoding && state.room?.quality) dom.quality.value = state.room.quality;
+  dom.qualityWrap.hidden = !state.media;
+  if (state.media && state.room?.quality) dom.quality.value = state.room.quality;
 }
 
 function renderMedia() {
-  dom.nowPlaying.textContent = state.media?.name ?? 'Stream';
-  document.title = state.media ? `${state.media.name} — Stream` : 'Stream';
+  const media = state.media;
+  if (!media) {
+    dom.nowPlaying.textContent = 'Stream';
+    document.title = 'Stream';
+  } else {
+    const tags = [resolutionLabel(media.height), media.hdr ? 'HDR' : '', usesTranscoder(media) ? 'converting' : 'original']
+      .filter(Boolean)
+      .join(' · ');
+    dom.nowPlaying.textContent = media.name;
+    dom.nowPlaying.title = tags;
+    document.title = `${media.name} — Stream`;
+  }
   renderLibrary();
   renderQuality();
 }
@@ -644,7 +514,11 @@ function renderLibrary() {
 
     const hint = document.createElement('span');
     hint.className = 'hint';
-    hint.textContent = [item.duration ? formatDuration(item.duration) : '', formatSize(item.size)]
+    hint.textContent = [
+      resolutionLabel(item.height),
+      item.duration ? formatDuration(item.duration) : '',
+      formatSize(item.size),
+    ]
       .filter(Boolean)
       .join(' · ');
 
@@ -668,8 +542,7 @@ function renderPresence() {
   for (const viewer of state.viewers) {
     const chip = document.createElement('span');
     chip.dataset.buffering = String(viewer.buffering);
-    const isMe = viewer.id === state.me?.id;
-    chip.textContent = isMe ? `${viewer.name} (you)` : viewer.name;
+    chip.textContent = viewer.id === state.me?.id ? `${viewer.name} (you)` : viewer.name;
     if (viewer.buffering) chip.textContent += ' · buffering';
     dom.presence.append(chip);
   }
@@ -701,25 +574,24 @@ function appendChat(entry, { quiet = false } = {}) {
 // ---------------------------------------------------------------- events --
 
 dom.video.addEventListener('play', () => {
-  if (state.applyingRemote || state.room?.source === 'screen') return;
+  if (state.applyingRemote) return;
   control('play', { position: currentPosition() });
 });
 
 dom.video.addEventListener('pause', () => {
-  if (state.applyingRemote || state.room?.source === 'screen') return;
-  if (dom.video.ended) return;
+  if (state.applyingRemote || dom.video.ended) return;
   control('pause', { position: currentPosition() });
 });
 
 dom.video.addEventListener('seeked', () => {
-  if (state.applyingRemote || state.room?.source === 'screen') return;
+  if (state.applyingRemote) return;
   const position = currentPosition();
   if (Math.abs(position - targetPosition()) < 0.75) return;
   control('seek', { position });
 });
 
 dom.video.addEventListener('ratechange', () => {
-  if (state.applyingRemote || state.room?.source === 'screen') return;
+  if (state.applyingRemote) return;
   // Ignore our own drift-correction nudges; only report deliberate changes.
   const expected = state.room?.rate ?? 1;
   const ratio = dom.video.playbackRate / expected;
@@ -730,7 +602,7 @@ dom.video.addEventListener('ratechange', () => {
 for (const event of ['waiting', 'stalled']) {
   dom.video.addEventListener(event, () => {
     state.buffering = true;
-    if (state.room?.source === 'file') showOverlay('Buffering…');
+    showOverlay('Buffering…');
   });
 }
 for (const event of ['playing', 'canplay', 'seeked']) {
@@ -741,12 +613,12 @@ for (const event of ['playing', 'canplay', 'seeked']) {
 }
 
 dom.video.addEventListener('error', () => {
-  if (state.room?.source === 'screen' || !state.media) return;
-  const hint =
-    state.media.deliveryMode === 'transcode'
-      ? 'This file needs ffmpeg on the host machine to play here.'
-      : 'This browser could not play that file.';
-  showOverlay(hint);
+  if (!state.media) return;
+  showOverlay(
+    state.capabilities.ffmpeg
+      ? 'This file could not be played. Try a lower quality setting.'
+      : 'This file needs ffmpeg on the host machine to play here.'
+  );
 });
 
 document.addEventListener('click', () => {
@@ -755,9 +627,7 @@ document.addEventListener('click', () => {
   syncToRoom({ force: true });
 }, { capture: true });
 
-dom.quality.addEventListener('change', () => {
-  control('quality', { quality: dom.quality.value });
-});
+dom.quality.addEventListener('change', () => control('quality', { quality: dom.quality.value }));
 
 dom.btnResync.addEventListener('click', () => {
   state.bestRtt = Infinity;
@@ -766,18 +636,11 @@ dom.btnResync.addEventListener('click', () => {
   flash('Re-synced');
 });
 
-dom.btnShareScreen.addEventListener('click', () => {
-  if (state.screenStream) stopScreenShare();
-  else startScreenShare();
-});
-
-function openLibrary() {
+const openLibrary = () => {
   dom.librarySheet.hidden = false;
   dom.libraryFilter.focus();
-}
-function closeLibrary() {
-  dom.librarySheet.hidden = true;
-}
+};
+const closeLibrary = () => { dom.librarySheet.hidden = true; };
 
 dom.btnLibrary.addEventListener('click', openLibrary);
 dom.placeholderBrowse.addEventListener('click', openLibrary);
@@ -792,9 +655,7 @@ dom.libraryFilter.addEventListener('input', () => {
 });
 
 dom.btnRescan.addEventListener('click', async () => {
-  const url = new URL('/api/rescan', location.href);
-  if (key) url.searchParams.set('k', key);
-  const response = await fetch(url, { method: 'POST', credentials: 'same-origin' });
+  const response = await fetch('/api/rescan', { method: 'POST', credentials: 'same-origin' });
   if (!response.ok) {
     toast('Rescan failed.');
     return;
@@ -824,7 +685,7 @@ dom.composer.addEventListener('submit', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.target.matches('input, textarea')) return;
+  if (event.target.matches('input, textarea, select')) return;
   if (event.key === 'Escape') {
     closeLibrary();
     return;
@@ -842,26 +703,14 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-// Ask for a display name once, so chat isn't two people called "Guest".
-function ensureName() {
-  let name = localStorage.getItem('stream:name');
-  if (!name) {
-    name = (prompt('What should the other side call you?') ?? '').trim();
-    if (name) localStorage.setItem('stream:name', name);
-  }
-  return name;
-}
-
 setInterval(() => {
   if (!state.connected) return;
-  const buffering = state.buffering || dom.video.readyState < 3;
   send({
     type: 'report',
     position: state.media ? currentPosition() : null,
     paused: dom.video.paused,
-    buffering,
+    buffering: state.buffering || dom.video.readyState < 3,
   });
-  state.lastReportedBuffering = buffering;
   syncToRoom();
   updateSyncBadge();
 }, REPORT_INTERVAL);
@@ -869,5 +718,4 @@ setInterval(() => {
 setInterval(updateSyncBadge, 1000);
 setInterval(() => measureClock(2), 60_000);
 
-ensureName();
 connect();

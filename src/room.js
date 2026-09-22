@@ -21,7 +21,6 @@ export class Room {
     this.autoPauseOnBuffer = autoPauseOnBuffer;
     this.clock = clock;
 
-    this.source = 'file'; // 'file' | 'screen'
     this.mediaId = null;
     this.paused = true;
     this.rate = 1;
@@ -138,7 +137,6 @@ export class Room {
       }
 
       case 'select': {
-        this.source = 'file';
         this.mediaId = typeof message.mediaId === 'string' ? message.mediaId : null;
         this.paused = true;
         this.rate = 1;
@@ -165,20 +163,6 @@ export class Room {
         return { changed: true, reason: 'quality', by: viewer.id };
       }
 
-      case 'source': {
-        if (message.source !== 'file' && message.source !== 'screen') {
-          return { changed: false, reason: 'bad-source' };
-        }
-        // Only the host has a screen to share.
-        if (message.source === 'screen' && viewer.role !== 'host') {
-          return { changed: false, reason: 'not-allowed' };
-        }
-        this.source = message.source;
-        this.paused = true;
-        this._anchor(0, timestamp);
-        return { changed: true, reason: 'source', by: viewer.id };
-      }
-
       default:
         return { changed: false, reason: 'unknown-action' };
     }
@@ -197,7 +181,7 @@ export class Room {
     const wasBuffering = viewer.buffering;
     viewer.buffering = Boolean(message.buffering);
 
-    if (!this.autoPauseOnBuffer || this.source !== 'file') return { changed: false };
+    if (!this.autoPauseOnBuffer) return { changed: false };
 
     if (viewer.buffering && !wasBuffering && !this.paused) {
       // Freeze where the movie is *now*, before flipping the flag: once paused,
@@ -245,7 +229,6 @@ export class Room {
       type: 'state',
       version: this.version,
       serverTime: timestamp,
-      source: this.source,
       mediaId: this.mediaId,
       paused: this.paused,
       position: this.positionAt(timestamp),

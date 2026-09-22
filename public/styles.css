@@ -377,3 +377,49 @@ body.locked { display: grid; place-items: center; padding: 24px; }
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* ------------------------------------------------------- join / passcode -- */
+
+body.centered { display: grid; place-items: center; padding: 24px; }
+
+.card {
+  width: min(380px, 100%);
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 32px 28px;
+}
+.card-icon { font-size: 40px; line-height: 1; }
+.card h1 { font-size: 22px; margin: 12px 0 6px; }
+.card p { margin: 0 0 22px; }
+
+.field { display: block; text-align: left; margin-bottom: 14px; }
+.field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+.field input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 12px;
+}
+.field input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.passcode-input {
+  text-transform: uppercase;
+  letter-spacing: .18em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 18px;
+  text-align: center;
+}
+
+.button.wide { width: 100%; padding: 11px; }
+.button:disabled { opacity: .6; cursor: default; }
+
+.error {
+  color: #ff8c8c;
+  font-size: 13px;
+  margin: 14px 0 0;
+  text-align: center;
+}
+.error[hidden] { display: none; }

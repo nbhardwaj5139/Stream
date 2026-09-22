@@ -9,8 +9,8 @@ import { createServer } from '../../src/server.js';
 
 const MEDIA_DIR = process.argv[2] ?? path.join(process.cwd(), 'test', 'fixtures');
 const EXECUTABLE = process.env.CHROMIUM_PATH || undefined;
-const HOST_KEY = '1'.repeat(32);
-const GUEST_KEY = '2'.repeat(32);
+const HOST_PASSCODE = 'HOSTE2';
+const GUEST_PASSCODE = 'GUESTE2';
 
 let failures = 0;
 function check(label, condition, detail = '') {
@@ -43,7 +43,11 @@ const videoState = (page) =>
     };
   });
 
-const server = await createServer({ roots: [MEDIA_DIR], hostKey: HOST_KEY, guestKey: GUEST_KEY });
+const server = await createServer({
+  roots: [MEDIA_DIR],
+  hostPasscode: HOST_PASSCODE,
+  guestPasscode: GUEST_PASSCODE,
+});
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 console.log(`serving ${MEDIA_DIR} on ${base}\n`);
@@ -53,22 +57,44 @@ const browser = await chromium.launch({
   args: ['--autoplay-policy=no-user-gesture-required'],
 });
 
-async function openClient(key, name) {
+// Join the way a real person does: open the link, type the passcode.
+async function openClient(passcode, name) {
   const context = await browser.newContext();
   const page = await context.newPage();
-  page.on('dialog', (dialog) => dialog.accept(name));
   page.on('pageerror', (error) => {
     failures += 1;
     console.log(` FAIL  ${name} threw: ${error.message}`);
   });
-  await page.goto(`${base}/?k=${key}`);
+
+  await page.goto(base);
+  await page.fill('#name', name);
+  await page.fill('#passcode', passcode);
+  await page.click('#submit');
+
+  // The player shell, not #video: the video element stays hidden until
+  // somebody picks a film.
+  await page.waitForSelector('#btn-library', { state: 'visible', timeout: 10_000 });
   await page.waitForFunction(() => document.getElementById('sync-badge')?.textContent !== 'reconnecting');
   return page;
 }
 
 try {
-  const host = await openClient(HOST_KEY, 'Host');
-  const guest = await openClient(GUEST_KEY, 'Guest');
+  // --- the passcode door ---------------------------------------------------
+  const stranger = await browser.newContext();
+  const strangerPage = await stranger.newPage();
+  await strangerPage.goto(base);
+  check('an uninvited visitor gets the passcode page', await strangerPage.isVisible('#join-form'));
+
+  await strangerPage.fill('#passcode', 'WRONG1');
+  await strangerPage.click('#submit');
+  await strangerPage.waitForSelector('#error:not([hidden])', { timeout: 5000 }).catch(() => {});
+  check('a wrong passcode is refused', await strangerPage.isVisible('#error'));
+  check('a wrong passcode does not get in', await strangerPage.isVisible('#join-form'));
+  await stranger.close();
+
+  const host = await openClient(HOST_PASSCODE, 'Host');
+  const guest = await openClient(GUEST_PASSCODE, 'Guest');
+  check('the right passcode gets into the room', await guest.isVisible('#btn-library'));
 
   // --- the library both sides see -----------------------------------------
   await host.click('#btn-library');
@@ -133,6 +159,11 @@ try {
   // --- presence -----------------------------------------------------------
   const presence = await host.$eval('#presence', (node) => node.textContent);
   check('both viewers show in presence', /Host/.test(presence) && /Guest/.test(presence), presence);
+
+  // --- the session survives a reload ---------------------------------------
+  await guest.reload();
+  await guest.waitForSelector('#btn-library', { state: 'visible', timeout: 10_000 });
+  check('a reload does not ask for the passcode again', !(await guest.isVisible('#join-form')));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

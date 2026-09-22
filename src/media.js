@@ -81,6 +81,19 @@ async function probeFile(absolutePath) {
   }
 }
 
+// HDR footage transcoded without tone mapping comes out grey and washed out,
+// so we have to know before we start.
+function detectHdr(video) {
+  if (!video) return false;
+  const transfer = video.color_transfer ?? '';
+  const primaries = video.color_primaries ?? '';
+  return (
+    transfer === 'smpte2084' || // HDR10 / PQ
+    transfer === 'arib-std-b67' || // HLG
+    primaries === 'bt2020'
+  );
+}
+
 function summarizeProbe(probe) {
   if (!probe) return null;
   const streams = probe.streams ?? [];
@@ -88,12 +101,23 @@ function summarizeProbe(probe) {
   const audioStreams = streams.filter((s) => s.codec_type === 'audio');
   const subtitleStreams = streams.filter((s) => s.codec_type === 'subtitle');
 
+  const duration = Number(probe.format?.duration) || null;
+  const size = Number(probe.format?.size) || null;
+  // Overall bitrate decides whether a file is streamable as-is, regardless of
+  // whether the browser could technically decode it.
+  const bitrate =
+    Number(probe.format?.bit_rate) || (size && duration ? Math.round((size * 8) / duration) : null);
+
   return {
-    duration: Number(probe.format?.duration) || null,
+    duration,
+    bitrate,
     videoCodec: video?.codec_name ?? null,
     audioCodec: audioStreams[0]?.codec_name ?? null,
     width: video?.width ?? null,
     height: video?.height ?? null,
+    hdr: detectHdr(video),
+    pixelFormat: video?.pix_fmt ?? null,
+    audioChannels: audioStreams[0]?.channels ?? null,
     audioTracks: audioStreams.map((s, index) => ({
       index,
       streamIndex: s.index,
@@ -122,6 +146,18 @@ export function chooseDeliveryMode(absolutePath, info) {
   if (info.videoCodec && !NATIVE_VIDEO_CODECS.has(info.videoCodec)) return 'transcode';
   if (info.audioCodec && !NATIVE_AUDIO_CODECS.has(info.audioCodec)) return 'transcode';
   return 'direct';
+}
+
+// Above this, a straight copy will outrun almost any home upload link.
+export const STREAMABLE_BITRATE_CEILING = 12_000_000;
+
+// What the room should default to when this file is picked. A 60 Mbps 4K remux
+// is "original quality" that nobody can actually receive, so don't start there.
+export function suggestedQuality(info) {
+  if (!info) return 'original';
+  if (info.height && info.height > 1080) return 'high';
+  if (info.bitrate && info.bitrate > STREAMABLE_BITRATE_CEILING) return 'high';
+  return 'original';
 }
 
 export function needsVideoReencode(info) {
@@ -258,6 +294,7 @@ export class Library {
         size: item.size,
         extension: item.extension,
         duration: item.info?.duration ?? null,
+        height: item.info?.height ?? null,
         deliveryMode: item.deliveryMode,
       }))
       .sort((a, b) => a.relativePath.localeCompare(b.relativePath, undefined, { numeric: true }));
@@ -278,6 +315,10 @@ export function publicDescription(item) {
     height: item.info?.height ?? null,
     videoCodec: item.info?.videoCodec ?? null,
     audioCodec: item.info?.audioCodec ?? null,
+    audioChannels: item.info?.audioChannels ?? null,
+    bitrate: item.info?.bitrate ?? null,
+    hdr: item.info?.hdr ?? false,
+    suggestedQuality: suggestedQuality(item.info),
     audioTracks: item.info?.audioTracks ?? [],
     subtitles: [
       ...(item.subtitles ?? []).map((sub, index) => ({

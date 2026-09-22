@@ -2,63 +2,52 @@
 
 Watch the movies on your laptop together with someone in another country.
 
-You run one command, it prints two links. You open one, they open the other —
-on a PC, an iPad, a phone, whatever. Same movie, same moment, either of you can
-pause. Nothing to install on their side.
+You run one command and get a link and a passcode. You text her both. She opens
+the link on a PC, an iPad, a phone — anything with a browser — types the
+passcode, and she's in the room. Same movie, same moment, either of you can
+pause. Nothing to install on her side, no account to create.
 
 ```
-$ node bin/stream.js ~/Movies
+$ node bin/stream.js "D:\Movies"
 
 Found 38 video files in:
-  /Users/you/Movies
+  D:\Movies
 
-Starting public tunnel... done
+  Using h264_nvenc for 4K re-encoding (GPU accelerated).
 
-────────────────────────────────────────────────────────────────
-  Your link:   https://quiet-forest-1234.trycloudflare.com/?k=8f2a…
-  Their link:  https://quiet-forest-1234.trycloudflare.com/?k=c41b…
-────────────────────────────────────────────────────────────────
+Starting public link... done
+
+──────────────────────────────────────────────────────────────
+  Send her this link and this passcode:
+
+    https://quiet-forest-1234.trycloudflare.com
+    passcode:  K7M4PQ
+
+  Your own passcode (same link):  R3XB9T
+──────────────────────────────────────────────────────────────
 ```
 
-## Why not just share your screen?
-
-You can — there's a **Share screen** button, and it's the right tool when the
-thing you want to watch isn't a file you own (a streaming site, a live sports
-feed). But for a movie sitting on your disk it's the worse option:
-
-| | Share the file (default) | Share your screen |
-|---|---|---|
-| Picture | the original, untouched | re-encoded, softer, blocky in dark scenes |
-| Audio | original track, perfectly in sync | drifts out of sync over a long film |
-| Your laptop | reads a file off disk | encodes video continuously; fans on, battery down |
-| Subtitles | real subtitle tracks they can toggle | burned into the picture, if at all |
-| If their connection hiccups | it buffers, then catches up | they lose that moment forever |
-| Reliability | plain HTTPS; works everywhere | peer-to-peer; sometimes blocked by strict networks |
-
-So: file streaming is the default, and screen share is there for everything else.
+The passcode is never in the URL, so the link is safe to paste anywhere. She
+enters it once and her browser remembers her for 30 days.
 
 ## Getting started
 
 **Requirements**
 
 - **Node 18+** — the app itself has zero npm dependencies.
-- **ffmpeg** *(recommended)* — needed for `.mkv`, `.avi`, HEVC video and
-  AC3/DTS audio, which browsers can't play directly. `.mp4` and `.webm` work
-  without it.
+- **ffmpeg** — needed for `.mkv`, `.avi`, HEVC video, AC3/DTS audio, and
+  anything 4K. Only plain `.mp4`/`.webm` work without it.
 - **cloudflared** *(recommended)* — creates the public link. Without it you can
   still watch together on the same Wi-Fi.
 
-```bash
-# macOS
-brew install ffmpeg cloudflared
-
-# Windows
+```powershell
 winget install Gyan.FFmpeg
 winget install Cloudflare.cloudflared
+```
 
-# Debian/Ubuntu
-sudo apt install ffmpeg
-# cloudflared: https://github.com/cloudflare/cloudflared/releases
+```bash
+# macOS / Linux
+brew install ffmpeg cloudflared
 ```
 
 **Run it**
@@ -66,29 +55,29 @@ sudo apt install ffmpeg
 ```bash
 git clone https://github.com/nbhardwaj5139/Stream.git
 cd Stream
-node bin/stream.js ~/Movies
+node bin/stream.js "D:\Movies"
 ```
 
-Send the "their link" to whoever you're watching with. Keep your laptop awake
-and the terminal open; when you press Ctrl+C the links stop working.
+Keep your laptop awake and the terminal open. When you press Ctrl+C the link
+stops working.
+
+Passcodes are generated once and saved to `~/.stream-room.json`, so they stay
+the same every time you start it — you don't have to text her a new one each
+week. Set your own with `--passcode`, or roll them with `--new-passcodes`.
 
 ## Options
 
 ```
--d, --dir <path>       Folder to serve (repeatable; default ~/Movies or ~/Videos)
--p, --port <number>    Port to listen on (default 8420)
-    --host-only        Only you can play/pause/seek; they just watch
-    --no-tunnel        Don't create a public link (LAN only, or bring your own tunnel)
-    --no-auto-pause    Don't pause everyone when one side is buffering
-    --no-transcode     Never invoke ffmpeg
-    --host-key <key>   Reuse a fixed key so your link stays the same between runs
-    --guest-key <key>  Same, for their link
-```
-
-Reusing keys is handy so you don't have to send a new link every week:
-
-```bash
-node bin/stream.js ~/Movies --host-key "$MY_KEY" --guest-key "$HER_KEY"
+-d, --dir <path>          Folder to serve (repeatable; default ~/Movies or ~/Videos)
+-p, --port <number>       Port to listen on (default 8420)
+    --passcode <code>     Set her passcode instead of generating one
+    --host-passcode <code>  Set your own passcode
+    --new-passcodes       Throw away the saved passcodes and make new ones
+    --host-only           Only you can play/pause/seek; she just watches
+    --no-tunnel           Don't create a public link (same Wi-Fi only)
+    --no-auto-pause       Don't pause everyone when one side is buffering
+    --no-transcode        Never invoke ffmpeg
+    --software-encoding   Force CPU encoding even if a GPU encoder exists
 ```
 
 ## How the syncing works
@@ -107,97 +96,116 @@ where it actually is against where it should be:
 - **over 1.5s out** — seek. Something real happened (a stall, a tab that slept).
 
 When either side starts buffering, the room pauses for everyone and shows
-*"Waiting for Priya to buffer…"*. When they recover, it resumes. Nobody has to
+*"Waiting for Priya to buffer…"*. When she recovers, it resumes. Nobody has to
 say "wait, go back" — that's `--no-auto-pause` if you'd rather it didn't.
 
-## What each side can do
+## Quality, and what 4K actually costs
 
-| | Host (your link) | Guest (their link) |
-|---|---|---|
-| Watch, chat | yes | yes |
-| Play, pause, seek | yes | yes, unless `--host-only` |
-| Choose the movie | yes | yes, unless `--host-only` |
-| Share their screen | yes | no |
-| Rescan the folder | yes | no |
-| See your folder paths | yes | no |
+There are two ways a file reaches her, and the quality selector in the player
+picks between them:
 
-Keyboard: <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> jump 10s ·
-<kbd>esc</kbd> close the library.
+**Original** sends the file byte-for-byte with HTTP range requests. No
+re-encoding, no quality loss, seeking is instant, and your laptop barely does
+any work. This is the real thing — the original picture and the original audio
+track, surround included.
 
-For transcoded files a quality selector appears next to **Re-sync**. It defaults
-to **Original**, which keeps ffmpeg in cheap remux mode; picking 1080p/720p/480p
-downscales instead, which helps a weak connection but costs you CPU.
+**1080p / 720p / 480p** runs the file through ffmpeg. Streams that are already
+browser-safe get copied rather than re-encoded, so a typical `.mkv` holding
+H.264 + AC3 only re-encodes the audio — the picture is untouched.
 
-## File format support
+For 4K, "original" is usually a lie you can't afford. A 4K remux runs 40–80
+Mbps; no home upload link carries that, and her connection can't receive it. So
+when you pick a 4K file the room **starts at 1080p on purpose**. You can push it
+back to Original if your upload is genuinely fast enough, but that is the honest
+default.
 
-The server checks each file with `ffprobe` and picks one of two routes:
+Three things follow from that, and they're the difference between 4K looking
+right and looking terrible:
 
-- **Direct** — `.mp4`/`.webm` holding H.264/VP9/AV1 video and AAC/MP3/Opus audio
-  are sent byte-for-byte, with HTTP range requests so seeking is instant. No
-  re-encoding, no quality loss, barely any CPU.
-- **Transcoded** — everything else goes through ffmpeg into a fragmented MP4.
-  Streams that are already browser-safe are copied rather than re-encoded, so a
-  typical `.mkv` holding H.264+AC3 only re-encodes the audio: cheap, and the
-  picture is untouched. HEVC or VC-1 video does need a real re-encode, which is
-  CPU-heavy — expect fans.
+- **Hardware encoding.** Re-encoding 4K with the CPU cannot keep up in real
+  time — it will stutter. The server looks for `h264_nvenc` (NVIDIA),
+  `h264_qsv` (Intel) or `h264_amf` (AMD) and uses whichever it finds, and tells
+  you at startup which one it picked. If it says `libx264`, 4K will be rough.
+- **HDR tone mapping.** Most 4K is HDR. Re-encoding HDR to SDR without tone
+  mapping produces a washed-out grey picture — the single most common way
+  transcoded 4K gets ruined. The server detects HDR from the colour transfer
+  and applies a Hable tone map. This needs an ffmpeg built with `zimg`; the
+  standard Windows builds have it.
+- **Surround audio survives.** AC3/DTS has to become AAC for browsers, but the
+  channel layout is kept rather than flattened to stereo, at 384 kbps for 5.1.
+  Her device downmixes if it needs to.
 
 Subtitles are found automatically: `Movie.srt`, `Movie.en.srt` and friends next
 to the file, plus text tracks embedded in the `.mkv`. SRT and ASS/SSA are
 converted to WebVTT on the fly. Bitmap subtitles (PGS, VOBSUB) are not supported
 — they're images, and would have to be burned into the picture.
 
+## What each side can do
+
+| | Host (your passcode) | Guest (her passcode) |
+|---|---|---|
+| Watch, chat | yes | yes |
+| Play, pause, seek | yes | yes, unless `--host-only` |
+| Choose the movie | yes | yes, unless `--host-only` |
+| Change quality | yes | yes |
+| Rescan the folder | yes | no |
+| See your folder paths | yes | no |
+
+Keyboard: <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> jump 10s ·
+<kbd>esc</kbd> close the library.
+
 ## Known limits
 
-- **Seeking inside a transcoded file restarts ffmpeg** at the new position. It
-  takes a second or two to resume. Direct-streamed files seek instantly.
-- **Screen share needs a direct connection.** It uses public STUN servers and no
-  TURN relay, so on a locked-down corporate or hotel network it may fail to
-  connect. File streaming goes over ordinary HTTPS and isn't affected.
-- **Your laptop has to stay awake** with the terminal open. On macOS,
-  `caffeinate -i node bin/stream.js ~/Movies` stops it sleeping mid-film.
-- **Cloudflare quick tunnels get a new address each run.** Fixed keys keep the
-  `?k=` part stable, but the domain changes; use a named Cloudflare tunnel if
-  you want a permanent URL.
-- **Upload speed is the real limit.** A 1080p film is often 8–15 Mbps. If your
-  upload can't carry that, drop the quality selector to 720p or 480p — ffmpeg
-  will downscale on the fly, at the cost of real CPU work on your laptop.
+- **Seeking in a transcoded file restarts ffmpeg** at the new position, so it
+  takes a second or two to resume. Original-quality files seek instantly.
+- **Your laptop has to stay awake** with the terminal open.
+- **Cloudflare quick tunnels get a new address each run.** The passcode stays
+  the same, but the domain changes; use a named Cloudflare tunnel if you want a
+  permanent URL.
+- **Upload speed is the real ceiling.** 1080p is roughly 8 Mbps, 720p about 4.
+  If she keeps buffering, drop a step — that's what the selector is for.
+- **This does not share your screen.** It plays files from the folders you
+  chose. Anything that isn't a file on your disk is out of scope.
 
 ## Security
 
-The links are the credentials. Anyone with the full link — including the part
-after `?k=` — can browse and watch the folders you shared, so treat it like a
-password and send it somewhere private.
+The passcode is the credential. Anyone who has the link *and* the passcode can
+browse and watch the folders you shared.
 
-- Two separate keys, so you can hand out guest access without giving up control.
-- Keys are compared in constant time, and a valid one sets an `HttpOnly` cookie
-  so the key stops travelling in URLs after the first load.
+- Passcodes are hashed with scrypt and compared in constant time.
+- Wrong guesses are rate limited per address, with a global cap so the guessing
+  can't just be spread across many addresses. Five wrong tries locks that
+  address out for fifteen minutes.
+- A correct passcode is exchanged for a signed, `HttpOnly` session cookie. The
+  passcode itself is never in a URL, so it can't leak through browser history,
+  referrer headers or a screenshot of the address bar.
 - Files are addressed by an opaque id, never by a path from the request, so
   there's no way to walk out of the folders you chose.
-- Only video files inside the folders you named are ever served.
+- Only video files inside those folders are ever served.
 
-There's no rate limiting and no TLS of its own — the Cloudflare tunnel provides
-HTTPS. This is built for two people who know each other, not for the open web.
+There's no TLS of its own — the Cloudflare tunnel provides HTTPS. This is built
+for two people who know each other, not for the open web.
 
 ## Development
 
 ```bash
-npm test          # 45 unit and integration tests, no dependencies needed
+npm test          # 67 unit and integration tests, no dependencies needed
 
-# optional end-to-end run: two real browsers against a real video file
+# optional: two real browsers against a real video file, end to end
 npm install --no-save playwright
 npx playwright install chromium
 node test/e2e/browser.mjs /path/to/a/folder/with/a/video
 ```
 
-The pieces:
-
 | File | Does |
 |---|---|
-| `bin/stream.js` | CLI, key generation, tunnel startup |
+| `bin/stream.js` | CLI, passcode generation and persistence, tunnel startup |
 | `src/server.js` | HTTP routes, range streaming, WebSocket wiring |
+| `src/auth.js` | passcode hashing, session cookies, brute-force limiting |
 | `src/room.js` | the shared playback clock — where the movie *should* be |
 | `src/ws.js` | a small RFC 6455 WebSocket server (keeps dependencies at zero) |
-| `src/media.js` | folder scanning, ffprobe, direct-vs-transcode decision |
-| `src/transcode.js` | ffmpeg argument construction |
+| `src/media.js` | folder scanning, ffprobe, HDR and bitrate detection |
+| `src/transcode.js` | encoder selection, HDR tone mapping, ffmpeg arguments |
 | `src/subtitles.js` | SRT/ASS → WebVTT |
-| `public/app.js` | the player, drift correction, chat, WebRTC screen share |
+| `public/join.html` | the passcode door |
+| `public/app.js` | the player, drift correction, chat |

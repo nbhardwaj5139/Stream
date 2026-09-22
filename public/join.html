@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>Join the room</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🍿</text></svg>">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="centered">
+  <main class="card">
+    <div class="card-icon">🍿</div>
+    <h1>Movie night</h1>
+    <p class="muted">Enter the passcode you were sent.</p>
+
+    <form id="join-form" autocomplete="off">
+      <label class="field">
+        <span>Your name</span>
+        <input id="name" type="text" maxlength="40" placeholder="So they know it's you" autocomplete="nickname">
+      </label>
+
+      <label class="field">
+        <span>Passcode</span>
+        <input id="passcode" type="text" inputmode="text" autocapitalize="characters"
+               autocorrect="off" spellcheck="false" maxlength="64" required
+               placeholder="ABC123" class="passcode-input">
+      </label>
+
+      <button id="submit" class="button primary wide" type="submit">Join</button>
+      <p id="error" class="error" role="alert" hidden></p>
+    </form>
+  </main>
+
+<script type="module">
+const form = document.getElementById('join-form');
+const passcode = document.getElementById('passcode');
+const name = document.getElementById('name');
+const error = document.getElementById('error');
+const submit = document.getElementById('submit');
+
+name.value = localStorage.getItem('stream:name') ?? '';
+(name.value ? passcode : name).focus();
+
+function fail(message) {
+  error.textContent = message;
+  error.hidden = false;
+  passcode.select();
+}
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  error.hidden = true;
+  submit.disabled = true;
+  submit.textContent = 'Checking…';
+
+  try {
+    const response = await fetch('/api/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ passcode: passcode.value.trim(), name: name.value.trim() }),
+    });
+
+    if (response.ok) {
+      if (name.value.trim()) localStorage.setItem('stream:name', name.value.trim());
+      location.replace('/');
+      return;
+    }
+
+    const body = await response.json().catch(() => ({}));
+    fail(body.error ?? 'Could not join. Try again.');
+  } catch {
+    fail('Could not reach the room. Is it still running?');
+  } finally {
+    submit.disabled = false;
+    submit.textContent = 'Join';
+  }
+});
+</script>
+</body>
+</html>
