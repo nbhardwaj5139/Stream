@@ -522,19 +522,26 @@ function renderLibrary() {
     button.type = 'button';
     if (item.id === state.room?.mediaId) button.setAttribute('aria-current', 'true');
 
+    // Filename on top, then where it lives and what it is underneath.
+    const separator = item.relativePath.includes('\\') ? '\\' : '/';
+    const parts = item.relativePath.split(separator);
+    const filename = parts.pop();
+    const folder = parts.join(separator);
+
     const title = document.createElement('span');
     title.className = 'title';
-    title.textContent = item.relativePath;
+    title.textContent = filename;
 
     const hint = document.createElement('span');
     hint.className = 'hint';
     hint.textContent = [
+      folder,
       resolutionLabel(item.height),
       item.duration ? formatDuration(item.duration) : '',
       formatSize(item.size),
     ]
       .filter(Boolean)
-      .join(' · ');
+      .join('  ·  ');
 
     button.append(title, hint);
     button.addEventListener('click', () => {
