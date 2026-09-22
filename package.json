@@ -1,0 +1,17 @@
+{
+  "name": "stream",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Watch local movies together over a shared link, in sync, from any device.",
+  "type": "module",
+  "bin": {
+    "stream": "bin/stream.js"
+  },
+  "scripts": {
+    "start": "node bin/stream.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

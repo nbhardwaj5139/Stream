@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>Stream</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🍿</text></svg>">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div id="app" class="app" data-panel="closed">
+
+  <main class="stage">
+    <div class="screen">
+      <video id="video" playsinline controls preload="metadata"></video>
+
+      <div id="placeholder" class="placeholder">
+        <div class="placeholder-inner">
+          <div class="placeholder-icon">🍿</div>
+          <h1>Nothing playing yet</h1>
+          <p id="placeholder-text">Pick something from the library to get started.</p>
+          <button id="placeholder-browse" class="button primary">Open library</button>
+        </div>
+      </div>
+
+      <div id="overlay" class="overlay" hidden>
+        <div class="spinner"></div>
+        <span id="overlay-text">Waiting…</span>
+      </div>
+
+      <div id="nudge" class="nudge" hidden></div>
+    </div>
+
+    <div class="bar">
+      <div class="bar-left">
+        <span id="now-playing" class="now-playing">Stream</span>
+        <span id="sync-badge" class="badge" title="Difference between your position and the room's">in sync</span>
+      </div>
+      <div class="bar-right">
+        <label id="quality-wrap" class="quality" hidden>
+          <span class="visually-hidden">Quality</span>
+          <select id="quality" class="select" title="Lower this if their side keeps buffering">
+            <option value="original">Original</option>
+            <option value="high">1080p</option>
+            <option value="medium">720p</option>
+            <option value="low">480p</option>
+          </select>
+        </label>
+        <button id="btn-resync" class="button ghost" title="Jump back to everyone else">Re-sync</button>
+        <button id="btn-share-screen" class="button ghost" hidden>Share screen</button>
+        <button id="btn-library" class="button ghost">Library</button>
+        <button id="btn-panel" class="button ghost" aria-expanded="false">Chat</button>
+      </div>
+    </div>
+  </main>
+
+  <aside class="panel" id="panel">
+    <header class="panel-head">
+      <div class="who" id="presence"></div>
+      <button id="btn-panel-close" class="icon-button" aria-label="Close panel">×</button>
+    </header>
+    <div class="chat" id="chat"></div>
+    <form class="composer" id="composer">
+      <input id="chat-input" type="text" placeholder="Say something…" autocomplete="off" maxlength="800">
+      <button class="button primary" type="submit">Send</button>
+    </form>
+  </aside>
+
+  <div class="sheet" id="library-sheet" hidden>
+    <div class="sheet-inner">
+      <header class="sheet-head">
+        <h2>Library</h2>
+        <div class="sheet-actions">
+          <button id="btn-rescan" class="button ghost" hidden>Rescan</button>
+          <button id="btn-library-close" class="icon-button" aria-label="Close library">×</button>
+        </div>
+      </header>
+      <input id="library-filter" class="filter" type="search" placeholder="Filter…" autocomplete="off">
+      <ul class="library" id="library-list"></ul>
+      <p class="sheet-note" id="library-note"></p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
