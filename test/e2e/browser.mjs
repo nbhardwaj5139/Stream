@@ -302,6 +302,18 @@ try {
   const hostBadge = await host.textContent('#sync-badge');
   check('the host is told they are sharing', hostBadge === 'Sharing your screen', hostBadge);
 
+  // The host's own preview must survive the state change their share caused.
+  const preview = await host.evaluate(() => {
+    const video = document.getElementById('video');
+    return {
+      playing: !video.paused,
+      tracks: video.srcObject ? video.srcObject.getVideoTracks().length : 0,
+      overlay: document.getElementById('overlay').hidden ? null : document.getElementById('overlay-text').textContent,
+    };
+  });
+  check('the host keeps their own preview', preview.tracks > 0 && preview.playing, JSON.stringify(preview));
+  check('and is not asked to tap to start', preview.overlay === null, String(preview.overlay));
+
   await host.click('#btn-share');
   const backToFiles = await until(
     async () => (await guest.textContent('#sync-badge')) !== 'Watching their screen',

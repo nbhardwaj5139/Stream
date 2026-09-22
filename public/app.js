@@ -439,13 +439,19 @@ function applyState(room, { initial = false } = {}) {
 
   if (room.source === 'screen') {
     if (previous?.source !== 'screen') {
-      // Leaving the file behind: a live stream has no shared clock to follow.
-      dom.video.removeAttribute('src');
-      dom.video.pause();
       state.media = null;
       dom.placeholder.hidden = true;
       dom.video.hidden = false;
-      if (!screenShare.sharing) showOverlay('Connecting to their screen…');
+      // Only clear the element for someone who is about to receive a stream.
+      // Doing it to the host tears down the preview they just started, and the
+      // pause() aborts its play(), which surfaces as "tap to start watching"
+      // on the machine that is doing the sharing.
+      if (!screenShare.sharing) {
+        dom.video.removeAttribute('src');
+        dom.video.pause();
+        dom.video.srcObject = null;
+        showOverlay('Connecting to their screen…');
+      }
     }
     renderPermissions();
     renderQuality();
@@ -873,6 +879,11 @@ dom.video.addEventListener('error', () => {
 document.addEventListener('click', () => {
   if (!state.needsGesture) return;
   state.needsGesture = false;
+  if (isScreenMode()) {
+    hideOverlay();
+    playVideo();
+    return;
+  }
   syncToRoom({ force: true });
 }, { capture: true });
 
