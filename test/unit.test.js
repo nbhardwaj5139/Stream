@@ -110,7 +110,7 @@ test('shared rooms let either side pause', () => {
 
 test('a buffering viewer pauses the room and resuming un-pauses it', () => {
   let clock = 0;
-  const room = new Room({ clock: () => clock });
+  const room = new Room({ clock: () => clock, autoPauseOnBuffer: true });
   const host = room.addViewer({ role: 'host' });
   const guest = room.addViewer({ role: 'guest' });
   room.applyControl(host, { action: 'select', mediaId: 'abc' });
@@ -130,7 +130,7 @@ test('a buffering viewer pauses the room and resuming un-pauses it', () => {
 });
 
 test('the room stays paused while a second viewer is still stalled', () => {
-  const room = new Room();
+  const room = new Room({ autoPauseOnBuffer: true });
   const host = room.addViewer({ role: 'host' });
   const a = room.addViewer({ role: 'guest' });
   const b = room.addViewer({ role: 'guest' });
@@ -152,7 +152,7 @@ test('chat trims, caps and attributes messages', () => {
 });
 
 test('removing the viewer we were waiting for clears the hold', () => {
-  const room = new Room();
+  const room = new Room({ autoPauseOnBuffer: true });
   const host = room.addViewer({ role: 'host' });
   const guest = room.addViewer({ role: 'guest' });
   room.applyControl(host, { action: 'play', position: 0 });
@@ -422,7 +422,7 @@ test('a pause somebody asked for is not undone when a buffer clears', () => {
   // The reported bug: the film would not stay paused. A viewer recovering from
   // a stall resumed the room even though someone had since pressed pause.
   let clock = 0;
-  const room = new Room({ clock: () => clock });
+  const room = new Room({ clock: () => clock, autoPauseOnBuffer: true });
   const host = room.addViewer({ role: 'host' });
   const guest = room.addViewer({ role: 'guest' });
 
@@ -448,7 +448,7 @@ test('a pause somebody asked for is not undone when a buffer clears', () => {
 
 test('a buffering hold still resumes by itself when nobody intervened', () => {
   let clock = 0;
-  const room = new Room({ clock: () => clock });
+  const room = new Room({ clock: () => clock, autoPauseOnBuffer: true });
   const host = room.addViewer({ role: 'host' });
   const guest = room.addViewer({ role: 'guest' });
 
@@ -462,7 +462,7 @@ test('a buffering hold still resumes by itself when nobody intervened', () => {
 });
 
 test('pressing play clears a buffering hold', () => {
-  const room = new Room();
+  const room = new Room({ autoPauseOnBuffer: true });
   const host = room.addViewer({ role: 'host' });
   const guest = room.addViewer({ role: 'guest' });
 
@@ -534,7 +534,7 @@ test('the room gives up waiting on a buffer that never finishes', () => {
   // film for everybody, for good — and a paused video may never buffer enough
   // to report that it recovered, so the wait cannot end on its own.
   let clock = 0;
-  const room = new Room({ clock: () => clock, maxBufferHoldMs: 30_000 });
+  const room = new Room({ clock: () => clock, maxBufferHoldMs: 30_000, autoPauseOnBuffer: true });
   const host = room.addViewer({ role: 'host' });
   const guest = room.addViewer({ role: 'guest' });
 
@@ -560,7 +560,7 @@ test('the room gives up waiting on a buffer that never finishes', () => {
 
 test('a pause somebody asked for is never released by the timer', () => {
   let clock = 0;
-  const room = new Room({ clock: () => clock, maxBufferHoldMs: 1000 });
+  const room = new Room({ clock: () => clock, maxBufferHoldMs: 1000, autoPauseOnBuffer: true });
   const host = room.addViewer({ role: 'host' });
   const guest = room.addViewer({ role: 'guest' });
 
@@ -575,7 +575,7 @@ test('a pause somebody asked for is never released by the timer', () => {
 
 test('recovering normally still resumes without waiting for the timer', () => {
   let clock = 0;
-  const room = new Room({ clock: () => clock, maxBufferHoldMs: 30_000 });
+  const room = new Room({ clock: () => clock, maxBufferHoldMs: 30_000, autoPauseOnBuffer: true });
   const host = room.addViewer({ role: 'host' });
   const guest = room.addViewer({ role: 'guest' });
 

@@ -30,7 +30,8 @@ Options
       --tunnel-name <name>  Run this named Cloudflare tunnel instead of a
                             throwaway one (pairs with --hostname)
       --no-tunnel           Don't create a public link (same Wi-Fi only)
-      --no-auto-pause       Don't pause everyone when one side is buffering
+      --auto-pause          Pause everyone while one side buffers (off by
+                            default: it can oscillate on a slow connection)
       --no-transcode        Never invoke ffmpeg
       --software-encoding   Force CPU encoding even if a GPU encoder exists
   -h, --help                Show this help
@@ -55,7 +56,7 @@ function parseArgs(argv) {
     libraryMode: 'host',
     roomName: null,
     tunnel: true,
-    autoPauseOnBuffer: true,
+    autoPauseOnBuffer: false,
     allowTranscode: true,
     preferSoftwareEncoder: false,
   };
@@ -79,6 +80,7 @@ function parseArgs(argv) {
       case '--shared-library': options.libraryMode = 'shared'; break;
       case '--room-name': options.roomName = argv[++i]; break;
       case '--no-tunnel': options.tunnel = false; break;
+      case '--auto-pause': options.autoPauseOnBuffer = true; break;
       case '--no-auto-pause': options.autoPauseOnBuffer = false; break;
       case '--no-transcode': options.allowTranscode = false; break;
       case '--software-encoding': options.preferSoftwareEncoder = true; break;

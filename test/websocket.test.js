@@ -25,6 +25,8 @@ before(async () => {
     roots: [mediaRoot],
     hostPasscode: HOST_PASSCODE,
     guestPasscode: GUEST_PASSCODE,
+    // The hold is opt-in now; this suite exercises it.
+    autoPauseOnBuffer: true,
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();

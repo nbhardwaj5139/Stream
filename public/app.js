@@ -302,10 +302,15 @@ function deliveryChain(media) {
   // Untouched bytes: best picture, instant seeking, no CPU. Only when the file
   // is already something browsers open and nobody asked to downscale.
   if (media.deliveryMode === 'direct' && quality === 'original') chain.push('direct');
-  // Then whichever ffmpeg output this browser is known to handle, then the
-  // other one anyway, because the detection is itself a guess.
-  chain.push(NATIVE_HLS ? 'hls' : 'fmp4');
-  chain.push(NATIVE_HLS ? 'fmp4' : 'hls');
+
+  if (NATIVE_HLS) {
+    // Safari genuinely cannot play a fragmented MP4 off a chunked response, so
+    // falling back to one turns a slow start into a dead end. Retry HLS
+    // instead — the usual cause is ffmpeg not having produced a segment yet.
+    chain.push('hls', 'hls');
+  } else {
+    chain.push('fmp4', 'hls');
+  }
   return chain;
 }
 
@@ -773,8 +778,14 @@ async function explainPlaybackFailure() {
   if (state.deliveryIndex < chain.length - 1) {
     state.deliveryIndex += 1;
     showOverlay(`Getting ${media.name} ready…`);
-    loadMedia(media, targetPosition());
-    syncToRoom({ force: true });
+    // A retry of the same route is almost always ffmpeg still starting up, so
+    // give it a moment instead of asking again immediately.
+    const same = chain[state.deliveryIndex] === chain[state.deliveryIndex - 1];
+    setTimeout(() => {
+      if (state.media !== media) return;
+      loadMedia(media, targetPosition());
+      syncToRoom({ force: true });
+    }, same ? 4000 : 0);
     return;
   }
 

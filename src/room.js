@@ -19,7 +19,7 @@ export class Room {
   constructor({
     controlMode = 'everyone',
     libraryMode = 'host',
-    autoPauseOnBuffer = true,
+    autoPauseOnBuffer = false,
     // How long the room will hold for one person's buffer before giving up.
     // Without a bound, a viewer who never finishes loading stops the film for
     // everyone, permanently.

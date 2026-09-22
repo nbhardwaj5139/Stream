@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { needsVideoReencode, needsAudioReencode } from './media.js';
 import { MAX_HEIGHT_BY_QUALITY, BITRATE_BY_HEIGHT, buildVideoFilter } from './transcode.js';
 
-const SEGMENT_SECONDS = 4;
+const SEGMENT_SECONDS = 2;
 const PLAYLIST_NAME = 'playlist.m3u8';
 const SEGMENT_PATTERN = /^seg\d{5}\.ts$/;
 const IDLE_TIMEOUT_MS = 5 * 60_000;
@@ -157,7 +157,7 @@ export class HlsSessions {
 
   // The playlist is written before any segment exists, and Safari gives up on
   // an empty one, so wait until at least one segment has been listed.
-  async waitForPlaylist(session, { timeoutMs = 45_000, minimumSegments = 2 } = {}) {
+  async waitForPlaylist(session, { timeoutMs = 90_000, minimumSegments = 1 } = {}) {
     const playlist = path.join(session.directory, PLAYLIST_NAME);
     const deadline = Date.now() + timeoutMs;
 

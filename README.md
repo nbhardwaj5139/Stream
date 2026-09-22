@@ -86,7 +86,7 @@ rather than a separate one, so joining never navigates away from it.
     --shared-library      Let her browse your files too (default: host only)
     --room-name <text>    Heading on the passcode screen
     --no-tunnel           Don't create a public link (same Wi-Fi only)
-    --no-auto-pause       Don't pause everyone when one side is buffering
+    --auto-pause          Pause everyone while one side buffers (off by default)
     --no-transcode        Never invoke ffmpeg
     --software-encoding   Force CPU encoding even if a GPU encoder exists
 ```
@@ -187,15 +187,12 @@ where it actually is against where it should be:
   Time stretches slightly instead of the picture jumping; you don't notice.
 - **over 1.5s out** — seek. Something real happened (a stall, a tab that slept).
 
-When either side starts buffering, the room pauses for everyone and shows
-*"Waiting for Sam to buffer…"*. When she recovers, it resumes. Nobody has to
-say "wait, go back" — that's `--no-auto-pause` if you'd rather it didn't.
-
-That wait is bounded at 30 seconds. A viewer whose video never reaches a
-playable state would otherwise hold the film for everyone indefinitely, and
-since a paused video may never buffer enough to announce that it recovered,
-the wait could not end on its own. After 30 seconds the room plays on without
-them.
+`--auto-pause` will pause the room for everyone while one side buffers and
+resume when they recover, so nobody has to say "wait, go back". It is **off by
+default**, because on a connection that is marginal rather than fine it
+oscillates: pause, resume, stall, pause again, which is worse to watch than a
+bit of drift. When it is on, the wait is capped at 30 seconds so a viewer who
+never becomes playable cannot hold the film indefinitely.
 
 ## Quality, and what 4K actually costs
 
