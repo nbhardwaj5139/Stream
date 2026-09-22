@@ -212,23 +212,42 @@ if (!fs.existsSync(credentials)) {
 
 // 3. Point the DNS record at the tunnel.
 console.log(`3/4  Routing ${hostname} to the tunnel.`);
-let routed = true;
-try {
-  await run('cloudflared', ['tunnel', 'route', 'dns', tunnelName, hostname]);
-} catch {
-  // Re-running is the usual reason, and harmless — but so is an existing
-  // record pointing somewhere else, which is not. Check rather than assume.
-  routed = false;
+
+// Capture rather than inherit: cloudflared's "record already exists" is the
+// normal answer on a re-run, and it should not look like a failure.
+async function route(extraArgs = []) {
+  try {
+    await execFileAsync('cloudflared', ['tunnel', 'route', 'dns', ...extraArgs, tunnelName, hostname], {
+      timeout: 60_000,
+    });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: `${error.stdout ?? ''}${error.stderr ?? error.message ?? ''}` };
+  }
 }
-if (!routed) {
+
+let routeResult = await route();
+if (!routeResult.ok) {
+  const existing = /record with that host already exists/i.test(routeResult.message);
   const check = await inspectHostname(hostname);
-  if (check.verdict === 'ok') {
-    console.log('     (already routed — continuing)');
-  } else {
-    console.log(`     Could not route ${hostname}.`);
-    console.log(`     ${check.detail}`);
-    console.log('     Delete any existing A/CNAME record for that name in the Cloudflare');
-    console.log('     dashboard (DNS tab), then run this again.');
+
+  if (existing && check.verdict === 'ok') {
+    // Already a Cloudflare record. Repoint it rather than making them go and
+    // delete it by hand — it is this tool's own record from a previous run.
+    const retry = await route(['--overwrite-dns']);
+    routeResult = retry;
+    console.log(retry.ok ? '     Repointed the existing record.' : '     Could not repoint it.');
+  }
+
+  if (!routeResult.ok) {
+    if (check.verdict === 'ok') {
+      console.log('     (already pointing at Cloudflare — continuing)');
+    } else {
+      console.log(`     Could not route ${hostname}.`);
+      console.log(`     ${check.detail}`);
+      console.log('     Delete any existing A/CNAME record for that name in the Cloudflare');
+      console.log('     dashboard (DNS tab), then run this again.');
+    }
   }
 }
 
