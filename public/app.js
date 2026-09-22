@@ -196,6 +196,7 @@ function handleMessage(message) {
       state.capabilities = message.capabilities ?? {};
       dom.btnRescan.hidden = state.role !== 'host';
       renderLibrary();
+      renderPermissions();
       for (const entry of message.chat ?? []) appendChat(entry, { quiet: true });
       applyState(message.state, { initial: true });
       warnAboutEncoding();
@@ -363,11 +364,11 @@ function applyState(room, { initial = false } = {}) {
     dom.video.removeAttribute('src');
     dom.video.hidden = true;
     dom.placeholder.hidden = false;
-    dom.placeholderText.textContent =
-      state.role === 'host' || room.controlMode !== 'host'
-        ? 'Pick something from the library to get started.'
-        : 'Waiting for the host to pick something.';
+    dom.placeholderText.textContent = canBrowse()
+      ? 'Pick something from the library to get started.'
+      : 'Waiting for the host to pick something.';
     hideOverlay();
+    renderPermissions();
     updateSyncBadge();
     return;
   }
@@ -389,6 +390,7 @@ function applyState(room, { initial = false } = {}) {
 
   syncToRoom({ force: initial });
   renderQuality();
+  renderPermissions();
   updateSyncBadge();
 }
 
@@ -462,6 +464,18 @@ function updateSyncBadge() {
 }
 
 // ---------------------------------------------------------------- render --
+
+// The library is the host's disk. A guest only ever sees what is playing.
+function canBrowse() {
+  return state.role === 'host' || state.room?.libraryMode === 'shared';
+}
+
+function renderPermissions() {
+  const allowed = canBrowse();
+  dom.btnLibrary.hidden = !allowed;
+  dom.placeholderBrowse.hidden = !allowed;
+  if (!allowed) closeLibrary();
+}
 
 function renderQuality() {
   dom.qualityWrap.hidden = !state.media;
@@ -612,13 +626,36 @@ for (const event of ['playing', 'canplay', 'seeked']) {
   });
 }
 
+// The <video> error event says nothing useful, so ask the server directly:
+// it knows whether ffmpeg refused the file, and why.
+async function explainPlaybackFailure() {
+  const media = state.media;
+  if (!media) return;
+
+  if (!state.capabilities.ffmpeg) {
+    showOverlay('This file needs ffmpeg on the host machine to play here.');
+    return;
+  }
+
+  showOverlay('Could not play that. Checking why…');
+  try {
+    const response = await fetch(streamUrl(media, state.startOffset), {
+      credentials: 'same-origin',
+    });
+    if (response.ok) {
+      response.body?.cancel();
+      showOverlay('This browser could not decode that file. Try a lower quality.');
+      return;
+    }
+    const detail = (await response.text()).trim();
+    showOverlay(detail.slice(0, 400) || `The host machine returned ${response.status}.`);
+  } catch {
+    showOverlay('Lost contact with the host machine.');
+  }
+}
+
 dom.video.addEventListener('error', () => {
-  if (!state.media) return;
-  showOverlay(
-    state.capabilities.ffmpeg
-      ? 'This file could not be played. Try a lower quality setting.'
-      : 'This file needs ffmpeg on the host machine to play here.'
-  );
+  explainPlaybackFailure();
 });
 
 document.addEventListener('click', () => {
@@ -637,6 +674,7 @@ dom.btnResync.addEventListener('click', () => {
 });
 
 const openLibrary = () => {
+  if (!canBrowse()) return;
   dom.librarySheet.hidden = false;
   dom.libraryFilter.focus();
 };

@@ -59,6 +59,8 @@ before(async () => {
 
   const library = await (await fetch(`${baseUrl}/api/library`, as(hostCookie))).json();
   fileId = library.items[0].id;
+  // Guests can only reach what is playing, so put this file on screen.
+  server.room.mediaId = fileId;
 });
 
 after(async () => {
@@ -142,7 +144,7 @@ test('repeated wrong passcodes get locked out', async () => {
 });
 
 test('the library finds videos recursively and ignores other files', async () => {
-  const body = await (await fetch(`${baseUrl}/api/library`, as(guestCookie))).json();
+  const body = await (await fetch(`${baseUrl}/api/library`, as(hostCookie))).json();
   assert.equal(body.items.length, 1);
   assert.equal(body.items[0].relativePath, path.join('Nested', 'Movie Night.mp4'));
   assert.equal(body.items[0].size, FILE_SIZE);
@@ -217,8 +219,8 @@ test('sidecar subtitles are served as WebVTT', async () => {
 });
 
 test('unknown ids and paths 404 rather than leaking the filesystem', async () => {
-  assert.equal((await fetch(`${baseUrl}/stream/${'f'.repeat(16)}`, as(guestCookie))).status, 404);
-  assert.equal((await fetch(`${baseUrl}/api/media/nope`, as(guestCookie))).status, 404);
+  assert.equal((await fetch(`${baseUrl}/stream/${'f'.repeat(16)}`, as(hostCookie))).status, 404);
+  assert.equal((await fetch(`${baseUrl}/api/media/nope`, as(hostCookie))).status, 404);
   assert.equal((await fetch(`${baseUrl}/static/../src/server.js`, as(hostCookie))).status, 404);
   assert.equal((await fetch(`${baseUrl}/stream/..%2F..%2Fetc%2Fpasswd`, as(hostCookie))).status, 404);
 });
@@ -232,7 +234,7 @@ test('files a browser cannot open are routed to the transcoder', async () => {
   const description = await (await fetch(`${baseUrl}/api/media/${mkv.id}`, as(hostCookie))).json();
   assert.equal(description.deliveryMode, 'transcode');
 
-  const response = await fetch(`${baseUrl}/transcode/${mkv.id}`, as(guestCookie));
+  const response = await fetch(`${baseUrl}/transcode/${mkv.id}`, as(hostCookie));
   if (server.capabilities.ffmpeg) {
     assert.equal(response.status, 200);
     await response.arrayBuffer().catch(() => {});
@@ -268,9 +270,75 @@ test('the host and guest passcodes must differ', async () => {
 });
 
 test('logging out invalidates the browser session', async () => {
-  const cookie = (await join(baseUrl, GUEST_PASSCODE)).cookie;
+  const cookie = (await join(baseUrl, HOST_PASSCODE)).cookie;
   assert.equal((await fetch(`${baseUrl}/api/library`, as(cookie))).status, 200);
 
   const out = await fetch(`${baseUrl}/api/logout`, { method: 'POST', ...as(cookie) });
   assert.match(out.headers.get('set-cookie'), /Max-Age=0/);
+});
+
+test('a guest cannot list the library at all', async () => {
+  const response = await fetch(`${baseUrl}/api/library`, as(guestCookie));
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).error, /host only/i);
+});
+
+test('a guest can only reach the file that is playing', async () => {
+  const library = await (await fetch(`${baseUrl}/api/library`, as(hostCookie))).json();
+  const playing = library.items.find((item) => item.relativePath.endsWith('.mp4'));
+  const other = library.items.find((item) => item.id !== playing.id);
+
+  server.room.mediaId = playing.id;
+
+  // What is on screen: allowed.
+  assert.equal((await fetch(`${baseUrl}/api/media/${playing.id}`, as(guestCookie))).status, 200);
+  assert.equal((await fetch(`${baseUrl}/stream/${playing.id}`, as(guestCookie))).status, 200);
+
+  // Anything else on the disk: refused, even holding a valid id.
+  if (other) {
+    assert.equal((await fetch(`${baseUrl}/api/media/${other.id}`, as(guestCookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/stream/${other.id}`, as(guestCookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/transcode/${other.id}`, as(guestCookie))).status, 403);
+    assert.equal(
+      (await fetch(`${baseUrl}/subtitles/${other.id}/file:0.vtt`, as(guestCookie))).status,
+      403
+    );
+  }
+
+  // The host is not restricted.
+  assert.equal((await fetch(`${baseUrl}/api/media/${other?.id ?? playing.id}`, as(hostCookie))).status, 200);
+
+  server.room.mediaId = fileId;
+});
+
+test('an id that was playing stops working once the film changes', async () => {
+  const library = await (await fetch(`${baseUrl}/api/library`, as(hostCookie))).json();
+  const [first, second] = library.items;
+  if (!second) return;
+
+  server.room.mediaId = first.id;
+  assert.equal((await fetch(`${baseUrl}/stream/${first.id}`, as(guestCookie))).status, 200);
+
+  server.room.mediaId = second.id;
+  assert.equal((await fetch(`${baseUrl}/stream/${first.id}`, as(guestCookie))).status, 403);
+
+  server.room.mediaId = fileId;
+});
+
+test('--shared-library opens the list back up', async () => {
+  const shared = await createServer({
+    roots: [mediaRoot],
+    hostPasscode: HOST_PASSCODE,
+    guestPasscode: GUEST_PASSCODE,
+    libraryMode: 'shared',
+  });
+  await new Promise((resolve) => shared.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${shared.address().port}`;
+  const cookie = (await join(url, GUEST_PASSCODE)).cookie;
+
+  const response = await fetch(`${url}/api/library`, { headers: { cookie } });
+  assert.equal(response.status, 200);
+  assert.ok((await response.json()).items.length > 0);
+
+  await new Promise((resolve) => shared.close(resolve));
 });

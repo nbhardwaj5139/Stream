@@ -96,11 +96,11 @@ function connect(cookie) {
 }
 
 test('a session cookie gets a welcome with the room state and library', async () => {
-  const client = connect(guestCookie);
+  const client = connect(hostCookie);
   await client.opened();
   const welcome = await client.next('welcome');
 
-  assert.equal(welcome.you.role, 'guest');
+  assert.equal(welcome.you.role, 'host');
   assert.ok(welcome.you.id);
   assert.equal(welcome.state.paused, true);
   assert.equal(welcome.library.length, 1);
@@ -333,4 +333,41 @@ test('a viewer whose connection is reset does not take the server down', async (
   survivor.send({ type: 'ping', t0: 99 });
   assert.equal((await survivor.next((m) => m.type === 'pong' && m.t0 === 99)).t0, 99);
   survivor.close();
+});
+
+test('a guest gets no file list in the welcome message', async () => {
+  const guest = connect(guestCookie);
+  await guest.opened();
+  const welcome = await guest.next('welcome');
+  assert.deepEqual(welcome.library, [], 'the disk contents must not be broadcast');
+  assert.equal(welcome.state.libraryMode, 'host');
+  guest.close();
+
+  const host = connect(hostCookie);
+  await host.opened();
+  assert.ok((await host.next('welcome')).library.length > 0, 'the host still sees it');
+  host.close();
+});
+
+test('a guest cannot choose what plays', async () => {
+  const host = connect(hostCookie);
+  const guest = connect(guestCookie);
+  await Promise.all([host.opened(), guest.opened()]);
+  const welcome = await host.next('welcome');
+  await guest.next('welcome');
+
+  guest.send({ type: 'control', action: 'select', mediaId: welcome.library[0].id });
+  const error = await guest.next('error');
+  assert.match(error.error, /only the host can choose/i);
+
+  // But she can still start and stop it, because that is a different
+  // privilege. Pause first: earlier tests may have left the room playing,
+  // and an unchanged room broadcasts nothing to wait on.
+  guest.send({ type: 'control', action: 'pause', position: 0 });
+  await guest.next((m) => m.type === 'state' && m.paused);
+  guest.send({ type: 'control', action: 'play', position: 5 });
+  await guest.next((m) => m.type === 'state' && !m.paused);
+
+  host.close();
+  guest.close();
 });

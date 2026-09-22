@@ -74,6 +74,7 @@ week. Set your own with `--passcode`, or roll them with `--new-passcodes`.
     --host-passcode <code>  Set your own passcode
     --new-passcodes       Throw away the saved passcodes and make new ones
     --host-only           Only you can play/pause/seek; she just watches
+    --shared-library      Let her browse your files too (default: host only)
     --no-tunnel           Don't create a public link (same Wi-Fi only)
     --no-auto-pause       Don't pause everyone when one side is buffering
     --no-transcode        Never invoke ffmpeg
@@ -221,10 +222,18 @@ converted to WebVTT on the fly. Bitmap subtitles (PGS, VOBSUB) are not supported
 |---|---|---|
 | Watch, chat | yes | yes |
 | Play, pause, seek | yes | yes, unless `--host-only` |
-| Choose the movie | yes | yes, unless `--host-only` |
+| **See the file list** | yes | **no**, unless `--shared-library` |
+| Choose the movie | yes | no, unless `--shared-library` |
 | Change quality | yes | yes |
 | Rescan the folder | yes | no |
 | See your folder paths | yes | no |
+
+By default a guest never sees what's on your disk — only the film that's
+playing right now. That isn't just a hidden button: the file list is left out
+of everything sent to her, and the streaming routes refuse any id that isn't
+the current film, so an id kept from an earlier evening stops working the
+moment you change films. `--shared-library` lets her browse and pick if you
+want that instead.
 
 Keyboard: <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> jump 10s ·
 <kbd>esc</kbd> close the library.
@@ -266,7 +275,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 74 unit and integration tests, no dependencies needed
+npm test          # 80 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright

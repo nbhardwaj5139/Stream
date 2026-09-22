@@ -21,6 +21,7 @@ Options
       --host-passcode <code>  Set your own passcode
       --new-passcodes       Throw away the saved passcodes and make new ones
       --host-only           Only you can play/pause/seek; she just watches
+      --shared-library      Let her browse your files too (default: host only)
       --hostname <domain>   Your own domain, e.g. movies.example.com
       --tunnel-name <name>  Run this named Cloudflare tunnel instead of a
                             throwaway one (pairs with --hostname)
@@ -46,6 +47,7 @@ function parseArgs(argv) {
     hostname: null,
     tunnelName: null,
     controlMode: 'everyone',
+    libraryMode: 'host',
     tunnel: true,
     autoPauseOnBuffer: true,
     allowTranscode: true,
@@ -67,6 +69,7 @@ function parseArgs(argv) {
       case '--hostname': options.hostname = argv[++i]; break;
       case '--tunnel-name': options.tunnelName = argv[++i]; break;
       case '--host-only': options.controlMode = 'host'; break;
+      case '--shared-library': options.libraryMode = 'shared'; break;
       case '--no-tunnel': options.tunnel = false; break;
       case '--no-auto-pause': options.autoPauseOnBuffer = false; break;
       case '--no-transcode': options.allowTranscode = false; break;
@@ -163,6 +166,7 @@ const server = await createServer({
   guestPasscode,
   sessionSecret,
   controlMode: options.controlMode,
+  libraryMode: options.libraryMode,
   autoPauseOnBuffer: options.autoPauseOnBuffer,
   allowTranscode: options.allowTranscode,
   preferSoftwareEncoder: options.preferSoftwareEncoder,
@@ -250,6 +254,11 @@ if (!tunnel && !hostname) {
 }
 
 console.log(`\nControl: ${options.controlMode === 'host' ? 'only you' : 'either of you'} can play, pause and seek.`);
+console.log(
+  options.libraryMode === 'shared'
+    ? 'Library: she can browse your files too.'
+    : 'Library: only you can see the file list; she sees only what is playing.'
+);
 console.log(`Passcodes are saved in ${CONFIG_PATH} and reused next time.`);
 if (hostname && !options.tunnelName && options.tunnel) {
   console.log(

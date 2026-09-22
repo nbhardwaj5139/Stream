@@ -16,8 +16,15 @@ function sanitizeName(name, fallback) {
 }
 
 export class Room {
-  constructor({ controlMode = 'everyone', autoPauseOnBuffer = true, clock = now } = {}) {
+  constructor({
+    controlMode = 'everyone',
+    libraryMode = 'host',
+    autoPauseOnBuffer = true,
+    clock = now,
+  } = {}) {
     this.controlMode = controlMode; // 'everyone' | 'host'
+    // 'host': guests never see the file list, only what is playing right now.
+    this.libraryMode = libraryMode; // 'host' | 'shared'
     this.autoPauseOnBuffer = autoPauseOnBuffer;
     this.clock = clock;
 
@@ -72,6 +79,12 @@ export class Room {
     this.viewers.delete(id);
     if (this.waitingFor === id) this.waitingFor = null;
     return viewer ?? null;
+  }
+
+  // Browsing the disk is a separate privilege from pausing the film.
+  canBrowse(viewer) {
+    if (!viewer) return false;
+    return this.libraryMode === 'shared' || viewer.role === 'host';
   }
 
   canControl(viewer) {
@@ -137,6 +150,7 @@ export class Room {
       }
 
       case 'select': {
+        if (!this.canBrowse(viewer)) return { changed: false, reason: 'not-allowed-browse' };
         this.mediaId = typeof message.mediaId === 'string' ? message.mediaId : null;
         this.paused = true;
         this.rate = 1;
@@ -236,6 +250,7 @@ export class Room {
       audioTrack: this.audioTrack,
       quality: this.quality,
       controlMode: this.controlMode,
+      libraryMode: this.libraryMode,
       waitingFor: this.waitingFor,
     };
   }

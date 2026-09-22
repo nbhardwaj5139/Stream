@@ -71,9 +71,9 @@ async function openClient(passcode, name) {
   await page.fill('#passcode', passcode);
   await page.click('#submit');
 
-  // The player shell, not #video: the video element stays hidden until
-  // somebody picks a film.
-  await page.waitForSelector('#btn-library', { state: 'visible', timeout: 10_000 });
+  // Chat, not the library button: the library is host-only, and #video stays
+  // hidden until somebody picks a film.
+  await page.waitForSelector('#btn-panel', { state: 'visible', timeout: 10_000 });
   await page.waitForFunction(() => document.getElementById('sync-badge')?.textContent !== 'reconnecting');
   return page;
 }
@@ -94,9 +94,16 @@ try {
 
   const host = await openClient(HOST_PASSCODE, 'Host');
   const guest = await openClient(GUEST_PASSCODE, 'Guest');
-  check('the right passcode gets into the room', await guest.isVisible('#btn-library'));
+  check('the right passcode gets into the room', await guest.isVisible('#btn-panel'));
 
-  // --- the library both sides see -----------------------------------------
+  // --- the library is the host's alone -------------------------------------
+  check('the guest has no library button', !(await guest.isVisible('#btn-library')));
+  check('the host does have one', await host.isVisible('#btn-library'));
+  check(
+    'the guest is told to wait rather than offered a browse button',
+    !(await guest.isVisible('#placeholder-browse'))
+  );
+
   await host.click('#btn-library');
   const titles = await host.$$eval('#library-list .title', (nodes) => nodes.map((n) => n.textContent));
   check('library lists the video file', titles.length >= 1, titles.join(', '));
@@ -162,7 +169,7 @@ try {
 
   // --- the session survives a reload ---------------------------------------
   await guest.reload();
-  await guest.waitForSelector('#btn-library', { state: 'visible', timeout: 10_000 });
+  await guest.waitForSelector('#btn-panel', { state: 'visible', timeout: 10_000 });
   check('a reload does not ask for the passcode again', !(await guest.isVisible('#join-form')));
 } finally {
   await browser.close();

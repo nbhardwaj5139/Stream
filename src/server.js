@@ -85,6 +85,7 @@ export async function createServer(options = {}) {
     guestPasscode,
     sessionSecret = generateToken(32),
     controlMode = 'everyone',
+    libraryMode = 'host',
     autoPauseOnBuffer = true,
     allowTranscode = true,
     preferSoftwareEncoder = false,
@@ -106,7 +107,14 @@ export async function createServer(options = {}) {
   const library = new Library(roots);
   await library.scan();
 
-  const room = new Room({ controlMode, autoPauseOnBuffer });
+  const room = new Room({ controlMode, libraryMode, autoPauseOnBuffer });
+
+  // A guest sees the film that is playing and nothing else on the disk. Even
+  // holding an id from a previous film gets them nothing once it changes.
+  function canReach(session, mediaId) {
+    if (session.role === 'host' || room.libraryMode === 'shared') return true;
+    return Boolean(room.mediaId) && mediaId === room.mediaId;
+  }
   const ffmpeg = await detectFfmpeg();
   const encoding = ffmpeg.ffmpeg
     ? await detectCapabilities()
@@ -255,7 +263,7 @@ export async function createServer(options = {}) {
     stream.pipe(res);
   }
 
-  function serveTranscode(req, res, item, url) {
+  function serveTranscode(req, res, item, url, isHost = false) {
     if (!allowTranscode || !ffmpeg.ffmpeg) {
       sendText(res, 503, 'This file needs ffmpeg, which was not found on the host machine.');
       return;
@@ -266,15 +274,8 @@ export async function createServer(options = {}) {
     const requested = url.searchParams.get('quality');
     const quality = ['low', 'medium', 'high', 'original'].includes(requested) ? requested : 'original';
 
-    res.writeHead(200, {
-      'content-type': 'video/mp4',
-      'cache-control': 'no-store',
-      // Length is unknown while ffmpeg is still running; no seeking by range.
-      'accept-ranges': 'none',
-      'x-stream-start': String(startSeconds),
-      'x-stream-encoder': encoder,
-    });
     if (req.method === 'HEAD') {
+      res.writeHead(200, { 'content-type': 'video/mp4', 'accept-ranges': 'none' });
       res.end();
       return;
     }
@@ -289,14 +290,52 @@ export async function createServer(options = {}) {
       canToneMap: encoding.canToneMap,
     });
 
-    job.stdout.pipe(res);
-    job.stdout.on('error', () => job.stop());
-    job.process.on('close', (code) => {
-      if (code && code !== 0 && !res.writableEnded) {
-        process.stderr.write(`ffmpeg exited ${code}: ${job.getStderr()}\n`);
-      }
-      if (!res.writableEnded) res.end();
+    // Hold the status line until ffmpeg actually produces a byte. Committing to
+    // a 200 up front turns "ffmpeg could not decode this" into an empty video
+    // and a useless error in the browser.
+    let started = false;
+    job.stdout.once('data', (chunk) => {
+      started = true;
+      res.writeHead(200, {
+        'content-type': 'video/mp4',
+        'cache-control': 'no-store',
+        // Length is unknown while ffmpeg is still running; no seeking by range.
+        'accept-ranges': 'none',
+        'x-stream-start': String(startSeconds),
+        'x-stream-encoder': encoder,
+      });
+      res.write(chunk);
+      job.stdout.pipe(res);
     });
+
+    job.stdout.on('error', () => job.stop());
+
+    job.process.on('close', (code) => {
+      if (started) {
+        if (code && code !== 0) {
+          process.stderr.write(`\nffmpeg exited ${code} partway through:\n${job.getStderr()}\n`);
+        }
+        if (!res.writableEnded) res.end();
+        return;
+      }
+
+      // Nothing ever came out: a real failure, and we can still say so properly.
+      const detail = job.getStderr().trim();
+      process.stderr.write(
+        `\nffmpeg could not transcode ${item.relativePath} (exit ${code}):\n` +
+          `  ${job.args.join(' ')}\n${detail || '  (no output)'}\n`
+      );
+      if (res.headersSent || res.writableEnded) return;
+      // The host gets the real reason; a guest gets no filesystem detail.
+      sendText(
+        res,
+        500,
+        isHost
+          ? `ffmpeg could not play this file (exit ${code}).\n\n${detail || 'No error output.'}`
+          : 'The host machine could not decode this file.'
+      );
+    });
+
     // Browser closed the tab or seeked: stop burning the GPU immediately.
     res.on('close', () => job.stop());
   }
@@ -392,6 +431,7 @@ export async function createServer(options = {}) {
         role: session.role,
         name: session.name ?? '',
         controlMode: room.controlMode,
+        libraryMode: room.libraryMode,
         ffmpeg: ffmpeg.ffmpeg,
         ffprobe: ffmpeg.ffprobe,
         encoder,
@@ -403,6 +443,10 @@ export async function createServer(options = {}) {
     }
 
     if (pathname === '/api/library') {
+      if (session.role !== 'host' && room.libraryMode !== 'shared') {
+        sendJson(res, 403, { error: 'The library is host only.' });
+        return;
+      }
       sendJson(res, 200, { items: library.list(), scannedAt: library.scannedAt });
       return;
     }
@@ -426,6 +470,10 @@ export async function createServer(options = {}) {
 
     const mediaMatch = /^\/api\/media\/([a-f0-9]{16})$/.exec(pathname);
     if (mediaMatch) {
+      if (!canReach(session, mediaMatch[1])) {
+        sendJson(res, 403, { error: 'Only what is playing right now.' });
+        return;
+      }
       const item = await library.describe(mediaMatch[1]);
       if (!item) {
         sendJson(res, 404, { error: 'not found' });
@@ -437,6 +485,10 @@ export async function createServer(options = {}) {
 
     const streamMatch = /^\/stream\/([a-f0-9]{16})$/.exec(pathname);
     if (streamMatch) {
+      if (!canReach(session, streamMatch[1])) {
+        sendText(res, 403, 'Only what is playing right now.');
+        return;
+      }
       const item = await library.describe(streamMatch[1]);
       if (!item) {
         sendText(res, 404, 'Not found');
@@ -448,17 +500,25 @@ export async function createServer(options = {}) {
 
     const transcodeMatch = /^\/transcode\/([a-f0-9]{16})$/.exec(pathname);
     if (transcodeMatch) {
+      if (!canReach(session, transcodeMatch[1])) {
+        sendText(res, 403, 'Only what is playing right now.');
+        return;
+      }
       const item = await library.describe(transcodeMatch[1]);
       if (!item) {
         sendText(res, 404, 'Not found');
         return;
       }
-      serveTranscode(req, res, item, url);
+      serveTranscode(req, res, item, url, session.role === 'host');
       return;
     }
 
     const subtitleMatch = /^\/subtitles\/([a-f0-9]{16})\/([a-z]+:\d+)\.vtt$/.exec(pathname);
     if (subtitleMatch) {
+      if (!canReach(session, subtitleMatch[1])) {
+        sendText(res, 403, 'Only what is playing right now.');
+        return;
+      }
       const item = await library.describe(subtitleMatch[1]);
       if (!item) {
         sendText(res, 404, 'Not found');
@@ -491,7 +551,7 @@ export async function createServer(options = {}) {
       you: { id: viewer.id, name: viewer.name, role: viewer.role },
       state: room.snapshot(),
       chat: room.chat,
-      library: library.list(),
+      library: room.canBrowse(viewer) ? library.list() : [],
       capabilities: {
         ffmpeg: ffmpeg.ffmpeg,
         ffprobe: ffmpeg.ffprobe,
@@ -531,6 +591,8 @@ export async function createServer(options = {}) {
             broadcastState();
           } else if (result.reason === 'not-allowed') {
             connection.send({ type: 'error', error: 'Only the host can control playback in this room.' });
+          } else if (result.reason === 'not-allowed-browse') {
+            connection.send({ type: 'error', error: 'Only the host can choose what plays.' });
           }
           break;
         }
