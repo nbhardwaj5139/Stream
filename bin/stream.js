@@ -8,6 +8,7 @@ import { generatePasscode, generateToken } from '../src/auth.js';
 import { hasCloudflared, startTunnel, startNamedTunnel } from '../src/tunnel.js';
 import { describeProblem, resolveRoots } from '../src/roots.js';
 import { readIngressHostnames } from '../src/cloudflare.js';
+import { formatPreflight, preflight } from '../src/preflight.js';
 
 const CONFIG_PATH = path.join(os.homedir(), '.stream-room.json');
 
@@ -29,9 +30,12 @@ Options
       --share-quality <p>   Height for a shared screen: 720, 1080, 1440 or
                             2160 (default 1080; above that needs real upload)
       --turn <url>          TURN relay for screen sharing, e.g.
-                            turn:relay.example.com:3478 (repeatable)
+                            turn:relay.example.com:3478 (repeatable).
+                            Remembered, so it only has to be typed once.
       --turn-user <name>    Username for the TURN relay
       --turn-pass <secret>  Password for the TURN relay
+      --no-turn             Ignore the remembered relay for this run
+      --check               Check everything the evening needs, then exit
       --hostname <domain>   Your own domain, e.g. movies.example.com
       --tunnel-name <name>  Run this named Cloudflare tunnel instead of a
                             throwaway one (pairs with --hostname)
@@ -47,6 +51,10 @@ Examples
   node bin/stream.js                       (repeats whatever you ran last time)
   node bin/stream.js -d "D:\\Movies" -d "E:\\Films" --passcode POPCORN
   node bin/stream.js "D:\\Movies" --tunnel-name movies --hostname movies.example.com
+  node bin/stream.js --check               (before the night, not during it)
+
+The relay can also come from the environment, which keeps the password out of
+your shell history: STREAM_TURN_URL, STREAM_TURN_USER, STREAM_TURN_PASS.
 `.trim();
 
 function parseArgs(argv) {
@@ -65,6 +73,8 @@ function parseArgs(argv) {
     turnUrls: [],
     turnUser: null,
     turnPass: null,
+    useTurn: true,
+    check: false,
     tunnel: true,
     autoPauseOnBuffer: false,
     allowTranscode: true,
@@ -93,6 +103,8 @@ function parseArgs(argv) {
       case '--turn': options.turnUrls.push(argv[++i]); break;
       case '--turn-user': options.turnUser = argv[++i]; break;
       case '--turn-pass': options.turnPass = argv[++i]; break;
+      case '--no-turn': options.useTurn = false; break;
+      case '--check': options.check = true; break;
       case '--no-tunnel': options.tunnel = false; break;
       case '--auto-pause': options.autoPauseOnBuffer = true; break;
       case '--no-auto-pause': options.autoPauseOnBuffer = false; break;
@@ -217,6 +229,32 @@ saveConfig({ hostPasscode, guestPasscode, sessionSecret, lastRun: saved.lastRun 
 
 if (reusing) console.log('Using the folder and address from last time.\n');
 
+// A relay is set up once and then wanted every time. Take it from the flags,
+// then the environment, then what was used last time — so the evening it
+// actually matters, nobody has to remember the command.
+const storedTurn = lastRun.turn ?? {};
+if (options.useTurn) {
+  if (!options.turnUrls.length && process.env.STREAM_TURN_URL) {
+    options.turnUrls = process.env.STREAM_TURN_URL.split(',').map((url) => url.trim()).filter(Boolean);
+  }
+  options.turnUser ??= process.env.STREAM_TURN_USER ?? null;
+  options.turnPass ??= process.env.STREAM_TURN_PASS ?? null;
+
+  if (!options.turnUrls.length && Array.isArray(storedTurn.urls) && storedTurn.urls.length) {
+    options.turnUrls = storedTurn.urls;
+    options.turnUser ??= storedTurn.username ?? null;
+    options.turnPass ??= storedTurn.password ?? null;
+    console.log(`Using the relay from last time (${options.turnUrls.join(', ')}).`);
+  }
+} else {
+  options.turnUrls = [];
+  options.turnUser = null;
+  options.turnPass = null;
+}
+
+// The hostname is typed by a human, who may well paste a whole URL.
+const configuredHostname = options.hostname?.replace(/^https?:\/\//, '').replace(/\/+$/, '') ?? null;
+
 saveConfig({
   hostPasscode,
   guestPasscode,
@@ -224,10 +262,30 @@ saveConfig({
   lastRun: {
     dirs: roots,
     port: options.port,
-    hostname: options.hostname ?? null,
+    hostname: configuredHostname,
     tunnelName: options.tunnelName ?? null,
+    // Kept in this file, which is owner-only. Set STREAM_TURN_PASS instead if
+    // you would rather it never touched the disk.
+    turn: options.turnUrls.length
+      ? { urls: options.turnUrls, username: options.turnUser, password: options.turnPass }
+      : storedTurn,
   },
 });
+
+if (options.check) {
+  console.log('Checking what the evening needs...\n');
+  const report = await preflight({
+    roots,
+    port: options.port,
+    hostname: configuredHostname,
+    tunnelName: options.tunnelName,
+    turnUrls: options.turnUrls,
+    turnUser: options.turnUser,
+    turnPass: options.turnPass,
+  });
+  console.log(formatPreflight(report));
+  process.exit(report.ok ? 0 : 1);
+}
 
 console.log('Scanning for video files...');
 const server = await createServer({
@@ -283,8 +341,7 @@ if (!server.capabilities.ffmpeg) {
   console.log(`\n  Using ${server.capabilities.encoder} for 4K re-encoding (GPU accelerated).`);
 }
 
-// Strip any scheme the user typed so we always build exactly one https:// URL.
-let hostname = options.hostname?.replace(/^https?:\/\//, '').replace(/\/+$/, '') ?? null;
+let hostname = configuredHostname;
 
 // cloudflared serves whatever its config says, not what was typed here. If the
 // two disagree the printed link would not work, which is worse than useless
