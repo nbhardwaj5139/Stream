@@ -848,3 +848,31 @@ body.centered {
   fill: none; stroke: currentColor; stroke-width: 2.2;
   stroke-linecap: round; stroke-linejoin: round;
 }
+
+/* --------------------------------------------------------- link quality -- */
+
+/* "It looks blurry" is not actionable. These numbers are. */
+.link-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.link-stats[hidden] { display: none; }
+
+.link-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.link-stats[data-quality="good"] .link-dot { background: var(--ok); }
+.link-stats[data-quality="fair"] .link-dot { background: var(--warn); }
+.link-stats[data-quality="poor"] .link-dot { background: var(--danger); }
+.link-stats[data-quality="fair"] { color: var(--warn); }
+.link-stats[data-quality="poor"] { color: var(--danger); }

@@ -272,6 +272,18 @@ What it costs:
   need. Both sides have the button, and it takes a few seconds. Far better on a
   Tuesday than with someone waiting.
 
+- **You can see what the connection is doing.** Open the chat panel during a
+  share and there is a line reading something like `1080p 30fps · 6.2 Mbps ·
+  84ms`, with a dot that turns amber and then red as it degrades. The host sees
+  what it is sending to whoever is having the worst time of it; a viewer sees
+  what they are receiving. "It looks blurry" becomes a number you can act on —
+  and usually the action is dropping `--share-quality` a step.
+
+- **The screen is kept awake while something is on.** A host screen going dark
+  stops the capture, and a tablet dimming mid-scene is its own small misery.
+  Both ends hold a wake lock while a film is playing and release it when
+  nothing is. A browser that refuses is no problem; it simply carries on.
+
 - **A connection that drops is offered again.** Films are long and networks are
   not perfect. A failed peer connection is re-offered with backoff — a second,
   then two, then four, up to about a minute of trying — and the room says
@@ -401,7 +413,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 135 unit and integration tests, no dependencies needed
+npm test          # 142 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright
@@ -427,3 +439,5 @@ node test/e2e/browser.mjs /path/to/a/folder/with/a/video
 | `public/app.js` | the player, drift correction, chat |
 | `public/screen.js` | WebRTC screen sharing, audio negotiation, reconnection |
 | `public/probe.js` | the connection test, and what it means |
+| `public/stats.js` | live bitrate, resolution and loss from a peer connection |
+| `public/wakelock.js` | keeping the screen awake while something is playing |

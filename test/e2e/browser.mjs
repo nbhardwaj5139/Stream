@@ -353,6 +353,30 @@ try {
   const hostBadge = await host.textContent('#sync-badge');
   check('the host is told they are sharing', hostBadge === 'Sharing your screen', hostBadge);
 
+  // --- live connection figures --------------------------------------------
+  await openPanel(guest);
+  const measured = await until(async () => {
+    const text = await guest.evaluate(() => {
+      const node = document.getElementById('link-stats');
+      return node.hidden ? null : document.getElementById('link-text').textContent;
+    });
+    return text && /Mbps|kbps/.test(text);
+  }, { timeout: 20_000 });
+  const figures = await guest.textContent('#link-text');
+  check('the viewer can see what the connection is doing', measured, figures);
+
+  const quality = await guest.getAttribute('#link-stats', 'data-quality');
+  check('and it is graded', ['good', 'fair', 'poor'].includes(quality), String(quality));
+  await closePanel(guest);
+
+  // --- the screen is kept awake -------------------------------------------
+  const awake = await guest.evaluate(() => ({
+    supported: 'wakeLock' in navigator,
+    // Chromium headless refuses the request, which must not break anything.
+    stillPlaying: !document.getElementById('video').paused,
+  }));
+  check('asking to stay awake does not disturb playback', awake.stillPlaying, JSON.stringify(awake));
+
   // Sharing the whole screen means a preview of it would contain itself, so
   // the host gets told what is happening instead of an infinite mirror.
   const hostView = await host.evaluate(() => {

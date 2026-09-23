@@ -1,6 +1,8 @@
 // Client: keeps this browser's <video> lined up with the room's shared clock.
 import { DEFAULT_ICE_SERVERS, ScreenShare } from './screen.js';
 import { ConnectionProbe, describeProbeResult } from './probe.js';
+import { StatsSampler, describeStats, statsVerdict } from './stats.js';
+import { WakeLock } from './wakelock.js';
 
 const HARD_SEEK_THRESHOLD = 1.5;   // seconds out before we jump
 const SOFT_NUDGE_THRESHOLD = 0.25; // seconds out before we speed up/slow down
@@ -39,6 +41,8 @@ const dom = {
   btnPanelClose: el('btn-panel-close'),
   btnLeave: el('btn-leave'),
   btnTest: el('btn-test'),
+  linkStats: el('link-stats'),
+  linkText: el('link-text'),
   presence: el('presence'),
   chat: el('chat'),
   composer: el('composer'),
@@ -756,6 +760,9 @@ dom.btnSound.addEventListener('click', (event) => {
 for (const event of ['volumechange', 'play', 'pause', 'loadedmetadata']) {
   dom.video.addEventListener(event, renderSound);
 }
+for (const event of ['play', 'pause']) {
+  dom.video.addEventListener(event, updateWakeLock);
+}
 
 function renderQuality() {
   // Quality is ffmpeg's business; a shared screen negotiates its own.
@@ -1184,6 +1191,8 @@ const screenShare = new ScreenShare({
     else showOverlay(message);
   },
   onEnded: () => {
+    statsSampler.previous.clear();
+    dom.linkStats.hidden = true;
     dom.btnShare.querySelector('span').textContent = 'Share screen';
     dom.btnShare.setAttribute('aria-pressed', 'false');
     if (isScreenMode()) control('source', { source: 'file' });
@@ -1194,6 +1203,46 @@ state.screen = screenShare;
 // The same connection a share would need, carrying nothing, so it can be
 // checked on a Tuesday rather than discovered on the night.
 const probe = new ConnectionProbe({ send: (message) => send(message) });
+
+// A dark screen stops the capture, and a tablet dimming mid-scene is its own
+// small misery. Held while anything is playing, dropped when nothing is.
+const wakeLock = new WakeLock();
+
+function updateWakeLock() {
+  const watching = isScreenMode() || (state.media && !dom.video.paused);
+  wakeLock.want(Boolean(watching));
+}
+
+const statsSampler = new StatsSampler();
+
+async function updateLinkStats() {
+  if (!isScreenMode() || state.screen.peers.size === 0) {
+    dom.linkStats.hidden = true;
+    return;
+  }
+
+  // The host measures what it is sending; everyone else what they receive.
+  const sending = screenShare.sharing;
+  const samples = [];
+  for (const [id, peer] of screenShare.peers) {
+    const sample = await statsSampler.sample(id, peer, { sending });
+    if (sample) samples.push([id, sample]);
+  }
+  if (samples.length === 0) {
+    dom.linkStats.hidden = true;
+    return;
+  }
+
+  dom.linkStats.hidden = false;
+  // With several viewers, the one having the worst time is the one to show.
+  const order = { poor: 0, fair: 1, good: 2 };
+  samples.sort((a, b) => (order[statsVerdict(a[1])] ?? 3) - (order[statsVerdict(b[1])] ?? 3));
+  const [worstId, worst] = samples[0];
+
+  const who = sending ? `${nameOf(worstId)}: ` : '';
+  dom.linkText.textContent = who + describeStats(worst);
+  dom.linkStats.dataset.quality = statsVerdict(worst) ?? '';
+}
 
 dom.btnTest.addEventListener('click', async () => {
   const others = state.viewers.filter((viewer) => viewer.id !== state.me?.id);
@@ -1351,6 +1400,10 @@ setInterval(() => {
 }, REPORT_INTERVAL);
 
 setInterval(updateSyncBadge, 1000);
+setInterval(() => {
+  updateWakeLock();
+  updateLinkStats();
+}, 2000);
 setInterval(() => measureClock(2), 60_000);
 
 // Loading the page clears any session, so this is normally the gate. The check
