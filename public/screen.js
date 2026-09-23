@@ -9,9 +9,17 @@
 // routers will accept an incoming connection. When one will not — some mobile
 // carriers, some office networks — nothing connects without a TURN relay to
 // pass the media through, which is what `extraIceServers` is for.
-// Eight tries spans about a minute of backoff, which covers a router
-// restarting without pestering a network that is genuinely gone.
-const MAX_RECONNECT_ATTEMPTS = 8;
+// Six tries spans about half a minute of backoff, which covers a router
+// restarting. After that the fast attempts stop, but the slow ones do not:
+// a film runs for two hours and a network can be gone for ten minutes of it
+// without the evening being over. Retrying every half minute costs nothing
+// and means nobody has to walk to the laptop to restart the share.
+const FAST_ATTEMPTS = 6;
+const SLOW_RETRY_MS = 30_000;
+
+// A viewer that asks for a fresh offer over and over would have the host
+// renegotiating in a loop, so honour one request per viewer per this long.
+const REOFFER_INTERVAL_MS = 5000;
 
 export const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -105,6 +113,7 @@ export class ScreenShare {
     // Reconnection bookkeeping, per viewer.
     this.attempts = new Map();
     this.retries = new Map();
+    this.lastOffer = new Map();
   }
 
   get sharing() {
@@ -170,26 +179,28 @@ export class ScreenShare {
     for (const timer of this.retries.values()) clearTimeout(timer);
     this.retries.clear();
     this.attempts.clear();
+    this.lastOffer.clear();
     for (const peer of this.peers.values()) peer.close();
     this.peers.clear();
   }
 
   // A film runs for two hours; a connection that drops once in that time is
   // ordinary. Offer again rather than ending the evening, backing off so a
-  // network that is properly down is not hammered.
+  // network that is properly down is not hammered — but never stopping, so a
+  // network that comes back is picked up without anyone doing anything.
   _scheduleReconnect(id, delay) {
     if (!this.stream) return; // only the side with the picture can re-offer
     if (this.retries.has(id)) return;
 
     const attempt = (this.attempts.get(id) ?? 0) + 1;
-    if (attempt > MAX_RECONNECT_ATTEMPTS) {
-      this.onStateChange(id, 'gave-up');
-      return;
-    }
     this.attempts.set(id, attempt);
 
-    const wait = delay || Math.min(1000 * 2 ** (attempt - 1), 15_000);
-    this.onStateChange(id, 'reconnecting');
+    const wait =
+      delay ||
+      (attempt <= FAST_ATTEMPTS ? Math.min(1000 * 2 ** (attempt - 1), 15_000) : SLOW_RETRY_MS);
+    // Say it differently once the quick attempts are spent: the first burst is
+    // a blip, anything after it is a network that is actually down.
+    this.onStateChange(id, attempt <= FAST_ATTEMPTS ? 'reconnecting' : 'still-trying');
 
     this.retries.set(
       id,
@@ -206,11 +217,28 @@ export class ScreenShare {
     );
   }
 
+  // Viewer side: ask whoever is sharing to send the picture again. The host
+  // may believe the connection is fine when the viewer knows better — a
+  // reloaded tab, a peer that went away without saying so.
+  requestOffer(hostId) {
+    if (this.stream) return false; // the host does not ask itself
+    this.send({ type: 'signal', to: hostId, data: { kind: 'reoffer' } });
+    return true;
+  }
+
   close(id) {
     clearTimeout(this.retries.get(id));
     this.retries.delete(id);
     this.peers.get(id)?.close();
     this.peers.delete(id);
+  }
+
+  // Everything to do with one viewer, for when they have actually left rather
+  // than merely dropped: no retry should outlive them.
+  forget(id) {
+    this.close(id);
+    this.attempts.delete(id);
+    this.lastOffer.delete(id);
   }
 
   setIceServers(extra = []) {
@@ -256,6 +284,7 @@ export class ScreenShare {
   // Host side: offer the screen to one viewer.
   async offerTo(id) {
     if (!this.stream) return;
+    this.lastOffer.set(id, Date.now());
     this.close(id);
     const peer = this._peer(id);
 
@@ -286,10 +315,32 @@ export class ScreenShare {
   // Either side: handle something the other one sent.
   async handleSignal({ from, data }) {
     if (data.kind === 'probe') return; // handled by ConnectionProbe
+
+    if (data.kind === 'reoffer') {
+      if (!this.stream) return;
+      // Rate limited, so a viewer stuck in a retry loop cannot make the host
+      // renegotiate continuously — which would break the very connection the
+      // viewer is trying to recover.
+      const now = Date.now();
+      if (now - (this.lastOffer.get(from) ?? 0) < REOFFER_INTERVAL_MS) return;
+      this.lastOffer.set(from, now);
+      await this.offerTo(from);
+      return;
+    }
+
     let peer = this.peers.get(from);
 
     if (data.sdp) {
-      if (!peer) peer = this._peer(from);
+      if (data.sdp.type === 'offer') {
+        // Only the side holding the capture offers, and it builds a fresh
+        // connection every time it does. So a second offer is a new
+        // connection, not a renegotiation of the old one: feeding it to the
+        // existing peer would change that peer's DTLS fingerprint mid-life,
+        // which no browser accepts. Start again on this side too.
+        if (peer) this.close(from);
+        peer = this._peer(from);
+      }
+      if (!peer) return; // an answer for a connection that is already gone
       await peer.setRemoteDescription(new RTCSessionDescription(data.sdp));
       if (data.sdp.type !== 'offer') return;
 

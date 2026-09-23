@@ -184,26 +184,49 @@ test('a dropped viewer is offered the stream again, with backoff', async (t) => 
   t.mock.timers.reset();
 });
 
-test('reconnection gives up rather than retrying forever', async (t) => {
+test('reconnection slows down but never stops', async (t) => {
   const { ScreenShare } = await import('../public/screen.js');
   t.mock.timers.enable({ apis: ['setTimeout'] });
 
   const states = [];
+  let offers = 0;
   const share = new ScreenShare({
     send: () => {},
     onStream: () => {},
     onStateChange: (id, value) => states.push(value),
   });
   share.stream = { getTracks: () => [] };
-  share.offerTo = async () => {};
+  share.offerTo = async () => { offers += 1; };
 
-  // Well past the cap.
-  for (let i = 0; i < 12; i++) {
+  // Six quick attempts, spanning about half a minute of backoff.
+  for (let i = 0; i < 6; i++) {
     share._scheduleReconnect('viewer-1', 0);
     t.mock.timers.tick(20_000);
+    await Promise.resolve();
   }
+  assert.equal(offers, 6);
+  assert.equal(states.filter((value) => value === 'reconnecting').length, 6);
+  assert.equal(states.includes('still-trying'), false, 'not yet — these were the quick ones');
 
-  assert.ok(states.includes('gave-up'), 'it says so instead of trying silently');
+  // Past that it keeps going on a slow beat rather than giving up: a network
+  // that is down for ten minutes of a film should not end the evening.
+  share._scheduleReconnect('viewer-1', 0);
+  assert.equal(states.at(-1), 'still-trying', 'and it says so');
+  t.mock.timers.tick(29_999);
+  await Promise.resolve();
+  assert.equal(offers, 6, 'waiting the longer interval');
+  t.mock.timers.tick(1);
+  await Promise.resolve();
+  assert.equal(offers, 7);
+
+  // Still trying an hour in.
+  for (let i = 0; i < 100; i++) {
+    share._scheduleReconnect('viewer-1', 0);
+    t.mock.timers.tick(30_000);
+    await Promise.resolve();
+  }
+  assert.equal(offers, 107, 'never gives up while the capture is live');
+
   t.mock.timers.reset();
 });
 
@@ -271,4 +294,132 @@ test('a share offers the default servers plus whatever relay is configured', asy
   assert.deepEqual(share.config.iceServers, DEFAULT_ICE_SERVERS);
   share.setIceServers([relay]);
   assert.equal(share.config.iceServers.at(-1).credential, 'secret');
+});
+
+test('a viewer can ask the host to send the picture again', async () => {
+  const { ScreenShare } = await import('../public/screen.js');
+
+  const sent = [];
+  const viewer = new ScreenShare({ send: (message) => sent.push(message), onStream: () => {} });
+
+  assert.equal(viewer.requestOffer('host-1'), true);
+  assert.deepEqual(sent, [{ type: 'signal', to: 'host-1', data: { kind: 'reoffer' } }]);
+
+  // The host holds the capture, so it has nobody to ask.
+  viewer.stream = { getTracks: () => [] };
+  assert.equal(viewer.requestOffer('host-1'), false);
+  assert.equal(sent.length, 1);
+});
+
+test('the host answers a re-offer, but not on a loop', async () => {
+  const { ScreenShare } = await import('../public/screen.js');
+
+  const offered = [];
+  const host = new ScreenShare({ send: () => {}, onStream: () => {} });
+  host.stream = { getTracks: () => [] };
+  host.offerTo = async (id) => { offered.push(id); };
+
+  await host.handleSignal({ from: 'viewer-1', data: { kind: 'reoffer' } });
+  assert.deepEqual(offered, ['viewer-1'], 'the viewer knows something the host does not');
+
+  // A viewer stuck in a retry loop must not make the host renegotiate
+  // continuously — that would break the connection it is trying to recover.
+  await host.handleSignal({ from: 'viewer-1', data: { kind: 'reoffer' } });
+  await host.handleSignal({ from: 'viewer-1', data: { kind: 'reoffer' } });
+  assert.equal(offered.length, 1, 'rate limited');
+
+  // A different viewer has its own budget.
+  await host.handleSignal({ from: 'viewer-2', data: { kind: 'reoffer' } });
+  assert.deepEqual(offered, ['viewer-1', 'viewer-2']);
+
+  // Once the interval passes, the first viewer may ask again.
+  host.lastOffer.set('viewer-1', Date.now() - 6000);
+  await host.handleSignal({ from: 'viewer-1', data: { kind: 'reoffer' } });
+  assert.equal(offered.length, 3);
+});
+
+test('a viewer that is not sharing ignores a re-offer asked of it', async () => {
+  const { ScreenShare } = await import('../public/screen.js');
+
+  const sent = [];
+  const viewer = new ScreenShare({ send: (message) => sent.push(message), onStream: () => {} });
+  // No capture, so there is nothing to offer and nothing should be negotiated.
+  await viewer.handleSignal({ from: 'someone', data: { kind: 'reoffer' } });
+  assert.deepEqual(sent, []);
+  assert.equal(viewer.peers.size, 0);
+});
+
+test('forgetting a viewer cancels the retry that outlives them', async (t) => {
+  const { ScreenShare } = await import('../public/screen.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  let offers = 0;
+  const share = new ScreenShare({ send: () => {}, onStream: () => {} });
+  share.stream = { getTracks: () => [] };
+  share.offerTo = async () => { offers += 1; };
+
+  share._scheduleReconnect('viewer-1', 0);
+  share.forget('viewer-1');
+  t.mock.timers.tick(60_000);
+  await Promise.resolve();
+
+  assert.equal(offers, 0, 'somebody who left is not chased');
+  assert.equal(share.attempts.has('viewer-1'), false, 'and their backoff is not kept either');
+
+  t.mock.timers.reset();
+});
+
+// Node has no WebRTC types; the code only ever wraps a plain description in
+// one, so a pass-through stands in for it.
+function stubWebRTC(t) {
+  globalThis.RTCSessionDescription = class { constructor(init) { Object.assign(this, init); } };
+  t.after(() => { delete globalThis.RTCSessionDescription; });
+}
+
+test('a second offer replaces the connection rather than renegotiating it', async (t) => {
+  const { ScreenShare } = await import('../public/screen.js');
+  stubWebRTC(t);
+
+  const closed = [];
+  const viewer = new ScreenShare({ send: () => {}, onStream: () => {} });
+  // A stand-in peer: enough surface for the offer path, and it records when
+  // it is closed so we can prove the stale one is discarded.
+  viewer._peer = (id) => {
+    const peer = {
+      id,
+      remote: null,
+      local: null,
+      setRemoteDescription: async (sdp) => { peer.remote = sdp; },
+      createAnswer: async () => ({ type: 'answer', sdp: 'a=rtpmap:111 opus/48000/2\r\n' }),
+      setLocalDescription: async (sdp) => { peer.local = sdp; },
+      close: () => closed.push(peer),
+      addEventListener: () => {},
+    };
+    viewer.peers.set(id, peer);
+    return peer;
+  };
+
+  const offer = { type: 'offer', sdp: 'a=rtpmap:111 opus/48000/2\r\n' };
+  await viewer.handleSignal({ from: 'host', data: { sdp: offer } });
+  const first = viewer.peers.get('host');
+  assert.ok(first, 'the first offer builds a connection');
+  assert.deepEqual(closed, []);
+
+  // The host tore its side down and offered again — a whole new connection,
+  // with a new fingerprint. Reusing this side's peer would fail in a browser.
+  await viewer.handleSignal({ from: 'host', data: { sdp: offer } });
+  assert.deepEqual(closed, [first], 'the stale peer is closed');
+  assert.notEqual(viewer.peers.get('host'), first, 'and replaced');
+});
+
+test('an answer for a connection that is gone is dropped, not re-created', async (t) => {
+  const { ScreenShare } = await import('../public/screen.js');
+  stubWebRTC(t);
+
+  let built = 0;
+  const host = new ScreenShare({ send: () => {}, onStream: () => {} });
+  host._peer = () => { built += 1; return {}; };
+
+  await host.handleSignal({ from: 'viewer-1', data: { sdp: { type: 'answer', sdp: '' } } });
+  assert.equal(built, 0, 'a late answer must not resurrect a closed connection');
 });

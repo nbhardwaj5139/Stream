@@ -272,12 +272,16 @@ function handleMessage(message) {
     case 'presence': {
       const known = new Set(state.viewers.map((viewer) => viewer.id));
       state.viewers = message.viewers ?? [];
+      const here = new Set(state.viewers.map((viewer) => viewer.id));
       // Somebody who joins mid-share needs their own offer.
       if (screenShare.sharing) {
         for (const viewer of state.viewers) {
           if (viewer.id !== state.me?.id && !known.has(viewer.id)) screenShare.offerTo(viewer.id);
         }
       }
+      // Somebody who left is not coming back under the same id, so stop
+      // reconnecting to them — otherwise a closed tab is retried all evening.
+      for (const id of known) if (!here.has(id)) screenShare.forget(id);
       renderPresence();
       break;
     }
@@ -1176,9 +1180,12 @@ const screenShare = new ScreenShare({
       if (!screenShare.sharing) hideOverlay();
       return;
     }
-    if (connectionState === 'gave-up') {
-      const message = 'Could not get the connection back. Stop sharing and start again.';
-      if (screenShare.sharing) toast(message, 12_000);
+    if (connectionState === 'still-trying') {
+      // The quick attempts are spent, so this is a network that is actually
+      // down. It keeps trying on a slow beat, and says so rather than looking
+      // like it has stopped caring.
+      const message = 'Still trying to reconnect — it will pick up by itself when the network is back.';
+      if (screenShare.sharing) toast(message, 8000);
       else showOverlay(message);
       return;
     }
@@ -1400,9 +1407,37 @@ setInterval(() => {
 }, REPORT_INTERVAL);
 
 setInterval(updateSyncBadge, 1000);
+// A viewer can be sitting in screen mode with no picture while the host
+// believes the connection is fine: a reloaded tab, a peer that went away
+// without saying so. Nothing on the host's side will notice, so the viewer
+// asks — after a pause, because the usual reason is simply that the share is
+// still being set up.
+const REOFFER_AFTER_MS = 10_000;
+let blankSince = 0;
+
+function nudgeScreenShare() {
+  const sharer = state.room?.sharerId;
+  const waiting =
+    state.connected && isScreenMode() && sharer && sharer !== state.me?.id && !dom.video.srcObject;
+
+  if (!waiting) {
+    blankSince = 0;
+    return;
+  }
+  const now = Date.now();
+  if (!blankSince) {
+    blankSince = now;
+    return;
+  }
+  if (now - blankSince < REOFFER_AFTER_MS) return;
+  blankSince = now;
+  screenShare.requestOffer(sharer);
+}
+
 setInterval(() => {
   updateWakeLock();
   updateLinkStats();
+  nudgeScreenShare();
 }, 2000);
 setInterval(() => measureClock(2), 60_000);
 
