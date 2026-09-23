@@ -199,8 +199,11 @@ export class ScreenShare {
       delay ||
       (attempt <= FAST_ATTEMPTS ? Math.min(1000 * 2 ** (attempt - 1), 15_000) : SLOW_RETRY_MS);
     // Say it differently once the quick attempts are spent: the first burst is
-    // a blip, anything after it is a network that is actually down.
-    this.onStateChange(id, attempt <= FAST_ATTEMPTS ? 'reconnecting' : 'still-trying');
+    // a blip, anything after it is a network that is actually down. Said once
+    // at the changeover and then not again — a notice every thirty seconds
+    // over somebody's film is its own small misery.
+    if (attempt <= FAST_ATTEMPTS) this.onStateChange(id, 'reconnecting');
+    else if (attempt === FAST_ATTEMPTS + 1) this.onStateChange(id, 'still-trying');
 
     this.retries.set(
       id,

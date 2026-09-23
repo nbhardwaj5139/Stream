@@ -212,6 +212,7 @@ test('reconnection slows down but never stops', async (t) => {
   // that is down for ten minutes of a film should not end the evening.
   share._scheduleReconnect('viewer-1', 0);
   assert.equal(states.at(-1), 'still-trying', 'and it says so');
+  assert.equal(states.filter((value) => value === 'still-trying').length, 1);
   t.mock.timers.tick(29_999);
   await Promise.resolve();
   assert.equal(offers, 6, 'waiting the longer interval');
@@ -226,6 +227,13 @@ test('reconnection slows down but never stops', async (t) => {
     await Promise.resolve();
   }
   assert.equal(offers, 107, 'never gives up while the capture is live');
+  // But it does not keep announcing itself: a notice every thirty seconds
+  // over somebody's film is worse than silence.
+  assert.equal(
+    states.filter((value) => value === 'still-trying').length,
+    1,
+    'said once at the changeover, not on every slow retry'
+  );
 
   t.mock.timers.reset();
 });

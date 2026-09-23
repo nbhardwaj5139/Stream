@@ -259,3 +259,20 @@ test('a relay given no credentials says so instead of trying anyway', async (t) 
   assert.equal(stun.stage, 'binding');
   assert.equal(stun.mapped.address, '198.51.100.7');
 });
+
+test('a STUN-only server is not mistaken for a firewall', () => {
+  // A server that answers a Binding but never challenges an Allocate is
+  // reachable — it simply cannot pass media. That is a different problem from
+  // nothing answering at all, and a different fix, so it reads differently.
+  const described = describeRelay({
+    ok: false,
+    stage: 'challenge',
+    scheme: 'turn',
+    host: 'stun.example.com',
+    port: 3478,
+    error: 'the relay did not ask for credentials',
+  });
+
+  assert.match(described, /not like a TURN relay/);
+  assert.doesNotMatch(described, /firewall/, 'it answered, so a firewall is the wrong advice');
+});

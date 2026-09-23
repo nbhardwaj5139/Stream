@@ -480,10 +480,12 @@ for two people who know each other, not for the open web.
 ```bash
 npm test          # 171 unit and integration tests, no dependencies needed
 
-# optional: two real browsers against a real video file, end to end
+# optional: two real browsers, end to end
 npm install --no-save playwright
 npx playwright install chromium
-node test/e2e/browser.mjs /path/to/a/folder/with/a/video
+
+node test/e2e/screen.mjs    # the screen share, and its recovery
+node test/e2e/browser.mjs /path/to/a/folder/with/a/video   # file playback, in sync
 ```
 
 | File | Does |

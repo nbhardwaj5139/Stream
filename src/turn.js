@@ -256,6 +256,9 @@ function streamTransport({ host, port, timeoutMs, secure }) {
     socket.once(secure ? 'secureConnect' : 'connect', resolve);
     socket.once('error', reject);
   });
+  // request() awaits this, but if the caller never gets that far a connection
+  // error would reject with nobody listening, which takes the process down.
+  ready.catch(() => {});
 
   return {
     async request(message) {
@@ -428,6 +431,10 @@ export function describeRelay(result) {
         ? `${where} — the username or password was refused (${result.code}).`
         : `${where} — refused the allocation: ${result.error}` +
           (result.code ? ` (${result.code})` : '');
+    case 'challenge':
+      // It answered, so it is reachable; it just did not behave like a relay.
+      return `${where} — answered, but not like a TURN relay: ${result.error}.` +
+        ' A STUN-only server cannot pass media through.';
     default:
       return `${where} — ${result.error}. Nothing answered, so a firewall or a` +
         ' wrong port is the usual cause.';
