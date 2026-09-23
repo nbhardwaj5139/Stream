@@ -177,3 +177,30 @@ export function clientAddress(req) {
   }
   return req.socket?.remoteAddress ?? 'unknown';
 }
+
+// Fresh passcodes each evening: a code that stops working when the evening
+// ends is worth more than one nobody has to be told twice.
+//
+// But a restart soon after the last one is not a new evening — it is a crash,
+// a closed window, a laptop that slept. Rotating then locks out somebody in
+// another country holding a code that was right ten minutes ago, and since the
+// room asks for the passcode on every page load, a phone discarding a
+// backgrounded tab is enough to strand them. Inside this window the codes
+// stand; past it, the evening is over and they do not.
+export const RESUME_WINDOW_MS = 4 * 60 * 60 * 1000;
+
+export function shouldReusePasscodes({
+  startedAt = null,
+  now = Date.now(),
+  keepPasscodes = false,
+  newPasscodes = false,
+  windowMs = RESUME_WINDOW_MS,
+} = {}) {
+  // An explicit instruction beats any inference about what this run is.
+  if (newPasscodes) return false;
+  if (keepPasscodes) return true;
+  if (!Number.isFinite(startedAt)) return false;
+  // A clock that went backwards must not make a restart look ancient.
+  const elapsed = now - startedAt;
+  return elapsed >= 0 && elapsed < windowMs;
+}

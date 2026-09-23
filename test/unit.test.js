@@ -12,6 +12,7 @@ import {
   hashPasscode,
   parseCookies,
   safeEqual,
+  shouldReusePasscodes,
   signSession,
   verifyPasscode,
   verifySession,
@@ -585,4 +586,47 @@ test('recovering normally still resumes without waiting for the timer', () => {
   assert.equal(room.report(guest, { buffering: false }).changed, true);
   assert.equal(room.paused, false);
   assert.equal(room.waitingSince, null);
+});
+
+// --- Passcode rotation across a restart ---------------------------------
+
+test('a restart minutes after the last one keeps the passcodes', () => {
+  const now = Date.now();
+  // Somebody in another country is holding a code that was right ten minutes
+  // ago. Rotating here would lock them out of a film already in progress.
+  assert.equal(shouldReusePasscodes({ startedAt: now - 10 * 60_000, now }), true);
+  assert.equal(shouldReusePasscodes({ startedAt: now - 3.9 * 60 * 60_000, now }), true);
+});
+
+test('but a new evening gets new passcodes', () => {
+  const now = Date.now();
+  assert.equal(shouldReusePasscodes({ startedAt: now - 5 * 60 * 60_000, now }), false);
+  assert.equal(shouldReusePasscodes({ startedAt: now - 30 * 24 * 60 * 60_000, now }), false);
+  // Never run before: there is nothing to reuse.
+  assert.equal(shouldReusePasscodes({ startedAt: null, now }), false);
+  assert.equal(shouldReusePasscodes({ startedAt: undefined, now }), false);
+  assert.equal(shouldReusePasscodes({ startedAt: 'yesterday', now }), false);
+});
+
+test('what was asked for beats what was inferred', () => {
+  const now = Date.now();
+  const old = now - 48 * 60 * 60_000;
+  const recent = now - 60_000;
+
+  assert.equal(shouldReusePasscodes({ startedAt: old, now, keepPasscodes: true }), true);
+  assert.equal(shouldReusePasscodes({ startedAt: recent, now, newPasscodes: true }), false);
+  // Both at once is contradictory; the destructive one wins, because it is
+  // the one that cannot be arrived at by accident.
+  assert.equal(
+    shouldReusePasscodes({ startedAt: recent, now, keepPasscodes: true, newPasscodes: true }),
+    false
+  );
+});
+
+test('a clock that went backwards does not rotate the passcodes', () => {
+  const now = Date.now();
+  // A laptop resuming from sleep can correct its clock forwards, leaving a
+  // timestamp in the future. That is a restart, not a month-old session.
+  assert.equal(shouldReusePasscodes({ startedAt: now + 60_000, now }), false);
+  assert.equal(shouldReusePasscodes({ startedAt: now, now }), true);
 });

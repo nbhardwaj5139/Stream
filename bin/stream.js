@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createServer } from '../src/server.js';
-import { generatePasscode, generateToken } from '../src/auth.js';
+import { generatePasscode, generateToken, shouldReusePasscodes } from '../src/auth.js';
 import { hasCloudflared, startTunnel, startNamedTunnel } from '../src/tunnel.js';
 import { describeProblem, resolveRoots } from '../src/roots.js';
 import { readIngressHostnames } from '../src/cloudflare.js';
@@ -23,7 +23,8 @@ Options
   -p, --port <number>       Port to listen on (default 8420)
       --passcode <code>     Set her passcode instead of generating one
       --host-passcode <code>  Set your own passcode
-      --new-passcodes       Throw away the saved passcodes and make new ones
+      --keep-passcodes      Always reuse the saved passcodes
+      --new-passcodes       Force a fresh pair, even just after a restart
       --host-only           Only you can play/pause/seek; she just watches
       --shared-library      Let her browse your files too (default: host only)
       --room-name <text>    Heading on the passcode screen
@@ -64,6 +65,7 @@ function parseArgs(argv) {
     passcode: null,
     hostPasscode: null,
     keepPasscodes: false,
+    newPasscodes: false,
     hostname: null,
     tunnelName: null,
     controlMode: 'everyone',
@@ -93,7 +95,7 @@ function parseArgs(argv) {
       case '--passcode': options.passcode = argv[++i]; break;
       case '--host-passcode': options.hostPasscode = argv[++i]; break;
       case '--keep-passcodes': options.keepPasscodes = true; break;
-      case '--new-passcodes': break; // now the default; kept so old commands work
+      case '--new-passcodes': options.newPasscodes = true; break;
       case '--hostname': options.hostname = argv[++i]; break;
       case '--tunnel-name': options.tunnelName = argv[++i]; break;
       case '--host-only': options.controlMode = 'host'; break;
@@ -177,10 +179,26 @@ function localAddresses(port) {
 
 const options = parseArgs(process.argv.slice(2));
 const stored = loadConfig();
+const lastRun = stored.lastRun ?? {};
+
 // Fresh passcodes every session by default: a code that stops working when the
 // evening ends is worth more than one nobody has to be told twice.
-const saved = options.keepPasscodes ? stored : { lastRun: stored.lastRun };
-const lastRun = saved.lastRun ?? {};
+//
+// But a restart soon after the last one is not a new evening — it is a crash,
+// a closed window, a laptop that slept. Rotating then would lock out somebody
+// in another country holding a code that was correct ten minutes ago, and the
+// link asks for the passcode on every load, so a phone discarding a
+// backgrounded tab is enough to strand them. Inside the window, the codes
+// stand.
+const reusePasscodes = shouldReusePasscodes({
+  startedAt: lastRun.startedAt,
+  keepPasscodes: options.keepPasscodes,
+  newPasscodes: options.newPasscodes,
+});
+// Distinguish "asked for" from "inferred", so only the inference is explained.
+const resumed = reusePasscodes && !options.keepPasscodes;
+
+const saved = reusePasscodes ? stored : { lastRun };
 
 // Nothing passed? Do what we did last time rather than guessing at ~/Videos.
 let reusing = false;
@@ -216,19 +234,6 @@ if (roots.length === 0) {
   process.exit(1);
 }
 
-const hostPasscode = options.hostPasscode ?? saved.hostPasscode ?? generatePasscode();
-const guestPasscode = options.passcode ?? saved.guestPasscode ?? generatePasscode();
-const sessionSecret = saved.sessionSecret ?? generateToken(32);
-
-if (hostPasscode === guestPasscode) {
-  console.error('Your passcode and hers must be different.');
-  process.exit(1);
-}
-
-saveConfig({ hostPasscode, guestPasscode, sessionSecret, lastRun: saved.lastRun });
-
-if (reusing) console.log('Using the folder and address from last time.\n');
-
 // A relay is set up once and then wanted every time. Take it from the flags,
 // then the environment, then what was used last time — so the evening it
 // actually matters, nobody has to remember the command.
@@ -244,7 +249,6 @@ if (options.useTurn) {
     options.turnUrls = storedTurn.urls;
     options.turnUser ??= storedTurn.username ?? null;
     options.turnPass ??= storedTurn.password ?? null;
-    console.log(`Using the relay from last time (${options.turnUrls.join(', ')}).`);
   }
 } else {
   options.turnUrls = [];
@@ -255,23 +259,9 @@ if (options.useTurn) {
 // The hostname is typed by a human, who may well paste a whole URL.
 const configuredHostname = options.hostname?.replace(/^https?:\/\//, '').replace(/\/+$/, '') ?? null;
 
-saveConfig({
-  hostPasscode,
-  guestPasscode,
-  sessionSecret,
-  lastRun: {
-    dirs: roots,
-    port: options.port,
-    hostname: configuredHostname,
-    tunnelName: options.tunnelName ?? null,
-    // Kept in this file, which is owner-only. Set STREAM_TURN_PASS instead if
-    // you would rather it never touched the disk.
-    turn: options.turnUrls.length
-      ? { urls: options.turnUrls, username: options.turnUser, password: options.turnPass }
-      : storedTurn,
-  },
-});
-
+// Checking changes nothing: run it during an evening and the passcodes in
+// somebody's pocket must still work afterwards. So it happens before anything
+// is generated or written, and exits without touching the config.
 if (options.check) {
   console.log('Checking what the evening needs...\n');
   const report = await preflight({
@@ -286,6 +276,44 @@ if (options.check) {
   console.log(formatPreflight(report));
   process.exit(report.ok ? 0 : 1);
 }
+
+if (reusing) console.log('Using the folder and address from last time.');
+if (options.turnUrls.length) console.log(`Relay: ${options.turnUrls.join(', ')}`);
+
+const hostPasscode = options.hostPasscode ?? saved.hostPasscode ?? generatePasscode();
+const guestPasscode = options.passcode ?? saved.guestPasscode ?? generatePasscode();
+const sessionSecret = saved.sessionSecret ?? generateToken(32);
+
+if (hostPasscode === guestPasscode) {
+  console.error('The two passcodes must be different.');
+  process.exit(1);
+}
+
+if (resumed) {
+  const minutes = Math.round((Date.now() - (lastRun.startedAt ?? 0)) / 60_000);
+  console.log(
+    `Restarted ${minutes} minute${minutes === 1 ? '' : 's'} into a session, so the same ` +
+      'passcodes still work.\n  --new-passcodes forces a fresh pair.'
+  );
+}
+
+saveConfig({
+  hostPasscode,
+  guestPasscode,
+  sessionSecret,
+  lastRun: {
+    dirs: roots,
+    port: options.port,
+    hostname: configuredHostname,
+    tunnelName: options.tunnelName ?? null,
+    startedAt: Date.now(),
+    // Kept in this file, which is owner-only. Set STREAM_TURN_PASS instead if
+    // you would rather it never touched the disk.
+    turn: options.turnUrls.length
+      ? { urls: options.turnUrls, username: options.turnUser, password: options.turnPass }
+      : storedTurn,
+  },
+});
 
 console.log('Scanning for video files...');
 const server = await createServer({
@@ -438,9 +466,9 @@ console.log(
     : 'Library: only you can see the file list; she sees only what is playing.'
 );
 console.log(
-  options.keepPasscodes
+  options.keepPasscodes || resumed
     ? `Passcodes are the saved ones, from ${CONFIG_PATH}.`
-    : 'These passcodes are new for this session. Use --keep-passcodes to reuse the last set.'
+    : 'These passcodes are new for this session, and stay valid across a restart.'
 );
 if (hostname && !options.tunnelName && options.tunnel) {
   console.log(

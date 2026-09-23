@@ -66,9 +66,18 @@ bin/stream.js` cannot do if you are not already inside the folder.
 Keep your laptop awake and the terminal open. When you press Ctrl+C the link
 stops working.
 
-New passcodes are generated every time you start it, so last week's code stops
-working when the evening ends. Pass `--keep-passcodes` to reuse the previous
-set, or `--passcode` / `--host-passcode` to pin your own.
+New passcodes are generated for each session, so last week's code stops working
+when the evening ends.
+
+A restart within four hours is treated as the same session and keeps the codes.
+A crashed server, a closed window or a laptop that slept should not lock out
+somebody in another country holding a code that was right ten minutes ago —
+particularly since the room asks for the passcode on every page load, so a
+phone discarding a backgrounded tab is enough to strand them. Past four hours
+the evening is over and the codes rotate.
+
+`--keep-passcodes` always reuses the saved pair, `--new-passcodes` always makes
+a fresh one, and `--passcode` / `--host-passcode` pin your own.
 
 The passcode is asked for every time the page is opened, including a reload —
 loading the page drops the session, and the passcode screen is part of the page
@@ -79,17 +88,30 @@ rather than a separate one, so joining never navigates away from it.
 ```
 -d, --dir <path>          Folder to serve (repeatable; default ~/Movies or ~/Videos)
 -p, --port <number>       Port to listen on (default 8420)
-    --passcode <code>     Set her passcode instead of generating one
+    --passcode <code>     Set the guest passcode instead of generating one
     --host-passcode <code>  Set your own passcode
-    --keep-passcodes      Reuse last session's passcodes instead of new ones
-    --host-only           Only you can play/pause/seek; she just watches
-    --shared-library      Let her browse your files too (default: host only)
+    --keep-passcodes      Always reuse the saved passcodes
+    --new-passcodes       Force a fresh pair, even just after a restart
+    --host-only           Only you can play/pause/seek; the other side watches
+    --shared-library      Let them browse your files too (default: host only)
     --room-name <text>    Heading on the passcode screen
+    --share-quality <n>   720, 1080 (default), 1440 or 2160
+    --hostname <domain>   Your own domain, e.g. movies.example.com
+    --tunnel-name <name>  Run this named Cloudflare tunnel (pairs with --hostname)
+    --turn <url>          TURN relay for screen sharing (repeatable; remembered)
+    --turn-user <name>    Username for the TURN relay
+    --turn-pass <secret>  Password for the TURN relay
+    --no-turn             Ignore the remembered relay for this run
+    --check               Check everything the evening needs, then exit
     --no-tunnel           Don't create a public link (same Wi-Fi only)
     --auto-pause          Pause everyone while one side buffers (off by default)
     --no-transcode        Never invoke ffmpeg
     --software-encoding   Force CPU encoding even if a GPU encoder exists
 ```
+
+Run with no arguments at all and it repeats whatever you ran last time —
+folder, port, hostname and relay — so the everyday command is just
+`node bin/stream.js`.
 
 ## Using your own domain
 
@@ -262,10 +284,41 @@ What it costs:
   ```
 
   Any TURN service works; several offer a free tier that is ample for two
-  people. File streaming is plain HTTPS through the tunnel and never has this
+  people. It is remembered after the first run, so the flags are typed once
+  rather than on the night. If you would rather the password never touched
+  the disk, set `STREAM_TURN_URL`, `STREAM_TURN_USER` and `STREAM_TURN_PASS`
+  in the environment instead, and `--no-turn` ignores a remembered one.
+
+  A relay on TCP port 443 (`turns:relay.example.com:443`) gets through
+  networks that block everything else, at the cost of a little latency. It is
+  the one to reach for when a hotel or an office is involved.
+
+  File streaming is plain HTTPS through the tunnel and never has this
   problem — which is the main reason to keep it.
 
-  **Find out before it matters.** Open the chat panel and press **Test link**.
+  **A link that works is not the same as a picture that works.** The link is
+  ordinary HTTPS through the tunnel and will load on any connection, anywhere.
+  The picture is peer-to-peer and never touches the server, which is why it
+  can fail while everything else looks fine. Home broadband is usually happy;
+  mobile data usually is not, because carriers put everyone behind a shared
+  address that cannot be connected back to. That is the case a relay exists
+  for.
+
+  **Check the relay itself from the command line**, which does not need anyone
+  at the other end:
+
+  ```bash
+  node bin/stream.js --check
+  ```
+
+  It asks the relay for an allocation exactly as a browser would and prints the
+  address media would come from, so a wrong password or a blocked port is a
+  line of output rather than a silent black screen. It also checks the rest of
+  what the evening needs — the folders, the port, that cloudflared is serving
+  the hostname you think it is, that DNS points at Cloudflare — and separates
+  what would stop the evening from what is merely worth knowing.
+
+  **Find out what the two networks will actually do.** Open the chat panel and press **Test link**.
   It opens the same kind of connection a share would need, carrying a few bytes
   instead of a film, and says what happened: connected directly, connected
   through a relay, or could not connect — in which case a relay is what you
@@ -284,12 +337,23 @@ What it costs:
   Both ends hold a wake lock while a film is playing and release it when
   nothing is. A browser that refuses is no problem; it simply carries on.
 
-- **A connection that drops is offered again.** Films are long and networks are
-  not perfect. A failed peer connection is re-offered with backoff — a second,
-  then two, then four, up to about a minute of trying — and the room says
-  "Connection dropped — reconnecting…" while it does. Only the side holding the
-  picture retries; the other waits to be offered. After eight attempts it stops
-  and says so rather than retrying into the void.
+- **A connection that drops is offered again, for as long as the film runs.**
+  Films are long and networks are not perfect. A failed peer connection is
+  re-offered with backoff — a second, then two, then four, out to about half a
+  minute of quick attempts — and the room says "Connection dropped —
+  reconnecting…" while it does. After that it does not give up: it keeps
+  offering every thirty seconds until the share ends, saying "still trying" so
+  it does not look like it has stopped caring. A network that is out for ten
+  minutes of a two-hour film should not end the evening, and nobody should have
+  to walk to the laptop to restart the share.
+
+  Only the side holding the picture offers; the other waits to be offered. But
+  a viewer can ask. The host cannot tell the difference between a viewer
+  watching happily and one staring at nothing, so a viewer with no picture asks
+  for one after ten seconds — which covers a reloaded tab, or a peer that went
+  away without saying so. The host honours one such request per viewer every
+  five seconds, because a viewer stuck in a loop would otherwise have the host
+  renegotiating continuously and break the very connection it was recovering.
 
 Playback controls do nothing during a share, because a live stream has nothing
 to seek. Picking a film from the library ends the share by itself, and the room
@@ -389,7 +453,8 @@ Keyboard: <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> jump 10s 
 The passcode is the credential. Anyone who has the link *and* the passcode can
 browse and watch the folders you shared.
 
-- Passcodes are new for every session by default, so a code that leaks is only
+- Passcodes are new for every session by default (a restart within four hours
+  being the same session), so a code that leaks is only
   good until you restart.
 - Case is not part of a passcode. The field renders uppercase, phone keyboards
   capitalise and laptop keyboards do not, so a code read off a screen and typed
@@ -413,7 +478,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 142 unit and integration tests, no dependencies needed
+npm test          # 171 unit and integration tests, no dependencies needed
 
 # optional: two real browsers against a real video file, end to end
 npm install --no-save playwright
@@ -426,6 +491,8 @@ node test/e2e/browser.mjs /path/to/a/folder/with/a/video
 | `start.cmd` / `start.sh` | double-clickable launchers that work from anywhere |
 | `bin/stream.js` | CLI, passcode generation and persistence, tunnel startup |
 | `src/roots.js` | turning command-line arguments into folders to serve |
+| `src/preflight.js` | the `--check` run: what has to be true before the evening |
+| `src/turn.js` | a STUN/TURN client, to prove a relay works before it is needed |
 | `bin/setup-tunnel.js` | one-time wiring of a permanent address on your domain |
 | `src/cloudflare.js` | tunnel discovery and cloudflared config generation |
 | `src/server.js` | HTTP routes, range streaming, WebSocket wiring |
