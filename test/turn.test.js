@@ -276,3 +276,19 @@ test('a STUN-only server is not mistaken for a firewall', () => {
   assert.match(described, /not like a TURN relay/);
   assert.doesNotMatch(described, /firewall/, 'it answered, so a firewall is the wrong advice');
 });
+
+test('a relay that cannot be reached says why, in the words that lead to the fix', () => {
+  const base = { ok: false, stage: 'exchange', scheme: 'turn', host: 'relay.example.com', port: 3478 };
+
+  // Each of these sends somebody somewhere different, so none of them should
+  // be described as the generic "a firewall, probably".
+  assert.match(
+    describeRelay({ ...base, error: 'getaddrinfo ENOTFOUND relay.example.com' }),
+    /does not resolve/
+  );
+  assert.match(
+    describeRelay({ ...base, error: 'connect ECONNREFUSED 203.0.113.9:3478' }),
+    /nothing is listening on that port/
+  );
+  assert.match(describeRelay({ ...base, error: 'no answer from the relay' }), /firewall/);
+});

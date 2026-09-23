@@ -478,7 +478,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 171 unit and integration tests, no dependencies needed
+npm test          # 177 unit and integration tests, no dependencies needed
 
 # optional: two real browsers, end to end
 npm install --no-save playwright

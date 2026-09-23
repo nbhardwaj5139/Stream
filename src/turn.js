@@ -436,6 +436,14 @@ export function describeRelay(result) {
       return `${where} — answered, but not like a TURN relay: ${result.error}.` +
         ' A STUN-only server cannot pass media through.';
     default:
+      // A name that does not resolve is a typo or a dead service, not a
+      // blocked port, and sending somebody to their firewall wastes an hour.
+      if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(result.error ?? '')) {
+        return `${where} — that name does not resolve. Check the address.`;
+      }
+      if (/ECONNREFUSED/i.test(result.error ?? '')) {
+        return `${where} — the connection was refused, so nothing is listening on that port.`;
+      }
       return `${where} — ${result.error}. Nothing answered, so a firewall or a` +
         ' wrong port is the usual cause.';
   }
