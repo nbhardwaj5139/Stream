@@ -258,3 +258,17 @@ test('the connection test uses the same servers the share would', async () => {
   assert.deepEqual(probe.iceServers.slice(0, DEFAULT_ICE_SERVERS.length), DEFAULT_ICE_SERVERS);
   assert.deepEqual(probe.iceServers.at(-1), relay, 'a configured relay is tested too');
 });
+
+test('a share offers the default servers plus whatever relay is configured', async () => {
+  const { ScreenShare, DEFAULT_ICE_SERVERS } = await import('../public/screen.js');
+  const relay = { urls: 'turn:relay.example.com:3478', username: 'someone', credential: 'secret' };
+
+  const share = new ScreenShare({ send: () => {}, onStream: () => {}, iceServers: [relay] });
+  assert.deepEqual(share.config.iceServers, [...DEFAULT_ICE_SERVERS, relay]);
+
+  // And it can be changed after the fact, when the server says so on connect.
+  share.setIceServers([]);
+  assert.deepEqual(share.config.iceServers, DEFAULT_ICE_SERVERS);
+  share.setIceServers([relay]);
+  assert.equal(share.config.iceServers.at(-1).credential, 'secret');
+});

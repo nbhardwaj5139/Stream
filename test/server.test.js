@@ -423,3 +423,28 @@ test('the page points at versioned scripts so a stale client cannot persist', as
   const plain = await fetch(`${baseUrl}/static/app.js`);
   assert.match(plain.headers.get('cache-control'), /no-cache/);
 });
+
+test('a configured relay is handed to the browsers that need it', async () => {
+  const relay = { urls: ['turn:relay.example.com:3478'], username: 'someone', credential: 'secret' };
+  const relayed = await createServer({
+    roots: [mediaRoot],
+    hostPasscode: HOST_PASSCODE,
+    guestPasscode: GUEST_PASSCODE,
+    iceServers: [relay],
+  });
+  await new Promise((resolve) => relayed.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${relayed.address().port}`;
+  const cookie = (await join(url, GUEST_PASSCODE)).cookie;
+
+  // Screen sharing is peer to peer, so the relay has to reach the page or it
+  // may as well not be configured.
+  const session = await (await fetch(`${url}/api/session`, { headers: { cookie } })).json();
+  assert.deepEqual(session.iceServers, [relay]);
+  assert.equal(session.iceServers[0].credential, 'secret', 'credentials travel with it');
+
+  // Nothing configured means nothing extra, not undefined.
+  const plain = await (await fetch(`${baseUrl}/api/session`, as(guestCookie))).json();
+  assert.deepEqual(plain.iceServers, []);
+
+  await new Promise((resolve) => relayed.close(resolve));
+});
