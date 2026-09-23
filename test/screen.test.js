@@ -242,3 +242,19 @@ test('a recovered connection stops the retrying and forgets the attempts', async
   assert.deepEqual(offered, [], 'it mended itself while we waited');
   t.mock.timers.reset();
 });
+
+test('the connection test uses the same servers the share would', async () => {
+  const { DEFAULT_ICE_SERVERS } = await import('../public/screen.js');
+  const { ConnectionProbe } = await import('../public/probe.js');
+
+  // A test down a different path is not a test of anything, so the list has to
+  // have one definition rather than a copy in each file.
+  assert.ok(Array.isArray(DEFAULT_ICE_SERVERS) && DEFAULT_ICE_SERVERS.length > 0);
+
+  const relay = { urls: 'turn:relay.example.com:3478', username: 'u', credential: 'p' };
+  const probe = new ConnectionProbe({ send: () => {} });
+  probe.setIceServers([...DEFAULT_ICE_SERVERS, relay]);
+
+  assert.deepEqual(probe.iceServers.slice(0, DEFAULT_ICE_SERVERS.length), DEFAULT_ICE_SERVERS);
+  assert.deepEqual(probe.iceServers.at(-1), relay, 'a configured relay is tested too');
+});

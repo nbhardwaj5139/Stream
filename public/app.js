@@ -1,5 +1,5 @@
 // Client: keeps this browser's <video> lined up with the room's shared clock.
-import { ScreenShare } from './screen.js';
+import { DEFAULT_ICE_SERVERS, ScreenShare } from './screen.js';
 import { ConnectionProbe, describeProbeResult } from './probe.js';
 
 const HARD_SEEK_THRESHOLD = 1.5;   // seconds out before we jump
@@ -231,10 +231,9 @@ function handleMessage(message) {
       state.library = message.library ?? [];
       state.capabilities = message.capabilities ?? {};
       screenShare.setIceServers(state.capabilities.iceServers ?? []);
-      probe.setIceServers([
-        { urls: 'stun:stun.l.google.com:19302' },
-        ...(state.capabilities.iceServers ?? []),
-      ]);
+      // The same servers the share itself would use — a test down a different
+      // path is not a test of anything.
+      probe.setIceServers([...DEFAULT_ICE_SERVERS, ...(state.capabilities.iceServers ?? [])]);
       if (state.capabilities.shareHeight) screenShare.setShareHeight(state.capabilities.shareHeight);
       dom.btnRescan.hidden = state.role !== 'host';
       // Both sides use the same link, so say plainly which passcode got you in.

@@ -13,7 +13,7 @@
 // restarting without pestering a network that is genuinely gone.
 const MAX_RECONNECT_ATTEMPTS = 8;
 
-const DEFAULT_ICE_SERVERS = [
+export const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
 ];
@@ -219,22 +219,6 @@ export class ScreenShare {
 
   setShareHeight(height) {
     this.profile = shareProfile(height);
-  }
-
-  // Whether the media is flowing directly or through a relay. Useful when a
-  // connection works at home and not from abroad.
-  async connectionKind(id) {
-    const peer = this.peers.get(id);
-    if (!peer) return null;
-    const stats = await peer.getStats();
-    for (const report of stats.values()) {
-      if (report.type !== 'candidate-pair' || report.state !== 'succeeded') continue;
-      const local = stats.get(report.localCandidateId);
-      const remote = stats.get(report.remoteCandidateId);
-      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return 'relayed';
-      return 'direct';
-    }
-    return null;
   }
 
   _peer(id) {
