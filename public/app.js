@@ -1,6 +1,7 @@
 // Client: keeps this browser's <video> lined up with the room's shared clock.
 import { DEFAULT_ICE_SERVERS, ScreenShare } from './screen.js';
 import { ConnectionProbe, describeProbeResult } from './probe.js';
+import { describeSelfTest, selfTest } from './selftest.js';
 import { StatsSampler, describeStats, statsVerdict } from './stats.js';
 import { WakeLock } from './wakelock.js';
 
@@ -70,6 +71,7 @@ const state = {
   room: null,
   viewers: [],
   capabilities: {},
+  probeIceServers: [],
   clockOffset: 0,   // serverTime - clientTime
   bestRtt: Infinity,
   socket: null,
@@ -237,7 +239,8 @@ function handleMessage(message) {
       screenShare.setIceServers(state.capabilities.iceServers ?? []);
       // The same servers the share itself would use — a test down a different
       // path is not a test of anything.
-      probe.setIceServers([...DEFAULT_ICE_SERVERS, ...(state.capabilities.iceServers ?? [])]);
+      state.probeIceServers = [...DEFAULT_ICE_SERVERS, ...(state.capabilities.iceServers ?? [])];
+      probe.setIceServers(state.probeIceServers);
       if (state.capabilities.shareHeight) screenShare.setShareHeight(state.capabilities.shareHeight);
       dom.btnRescan.hidden = state.role !== 'host';
       // Both sides use the same link, so say plainly which passcode got you in.
@@ -1253,20 +1256,25 @@ async function updateLinkStats() {
 
 dom.btnTest.addEventListener('click', async () => {
   const others = state.viewers.filter((viewer) => viewer.id !== state.me?.id);
-  if (others.length === 0) {
-    toast('Nobody else is here to test against — ask them to open the link first.', 7000);
-    return;
-  }
 
   dom.btnTest.disabled = true;
   dom.btnTest.textContent = 'Testing…';
   try {
+    // Testing against the other person is the real test, so prefer it whenever
+    // they are here. Alone, ask what this network alone can answer — which is
+    // most of it, and is the version somebody can run before arranging to be
+    // on the page at the same time as anyone.
+    if (others.length === 0) {
+      const result = await selfTest(state.probeIceServers);
+      toast(describeSelfTest(result), 22_000);
+      return;
+    }
     for (const viewer of others) {
       const result = await probe.test(viewer.id);
       toast(describeProbeResult(result, { name: viewer.name }), 14_000);
     }
   } catch {
-    toast('The test could not run. Are they still on the page?', 8000);
+    toast('The test could not run. Try again in a moment.', 8000);
   } finally {
     dom.btnTest.disabled = false;
     dom.btnTest.textContent = 'Test link';
