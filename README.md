@@ -325,6 +325,19 @@ What it costs:
   need. Both sides have the button, and it takes a few seconds. Far better on a
   Tuesday than with someone waiting.
 
+  **Pressed alone, the same button tests what one side can answer by itself** —
+  which is most of it, and needs only one of you on the page. It asks each STUN
+  server separately and compares the public port each reports back. A router
+  that answers every destination from the same port can be connected back to;
+  one that gives a different port per destination cannot, because neither side
+  can predict where to send the first packet. That second case is what mobile
+  carriers do to everybody, and it is the real reason "it works on my wifi" and
+  "it works on my phone" are different claims. The verdict is one of four: this
+  network is fine, it needs the relay and the relay works, it needs a relay
+  that is not turned on, or it is blocking the whole idea. So you can send
+  somebody the link, have them press the button wherever they are, and find out
+  days before anyone is waiting.
+
 - **You can see what the connection is doing.** Open the chat panel during a
   share and there is a line reading something like `1080p 30fps · 6.2 Mbps ·
   84ms`, with a dot that turns amber and then red as it degrades. The host sees
@@ -478,7 +491,7 @@ for two people who know each other, not for the open web.
 ## Development
 
 ```bash
-npm test          # 177 unit and integration tests, no dependencies needed
+npm test          # 189 unit and integration tests, no dependencies needed
 
 # optional: two real browsers, end to end
 npm install --no-save playwright
@@ -507,6 +520,7 @@ node test/e2e/browser.mjs /path/to/a/folder/with/a/video   # file playback, in s
 | `src/subtitles.js` | SRT/ASS → WebVTT |
 | `public/app.js` | the player, drift correction, chat |
 | `public/screen.js` | WebRTC screen sharing, audio negotiation, reconnection |
-| `public/probe.js` | the connection test, and what it means |
+| `public/probe.js` | the two-sided connection test, and what it means |
+| `public/selftest.js` | the one-sided one: what this network alone can answer |
 | `public/stats.js` | live bitrate, resolution and loss from a peer connection |
 | `public/wakelock.js` | keeping the screen awake while something is playing |
