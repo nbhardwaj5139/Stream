@@ -37,6 +37,7 @@ const dom = {
   chat: el('chat'),
   composer: el('composer'),
   chatInput: el('chat-input'),
+  emojiRow: el('emoji-row'),
   toast: el('toast'),
   gate: el('gate'),
   joinForm: el('join-form'),
@@ -699,6 +700,35 @@ function renderPresence() {
   renderTitle();
 }
 
+// Built at run time and guarded: an older browser that does not know these
+// Unicode properties would reject a regex literal, and with it the whole page.
+const EMOJI_ONLY = (() => {
+  try {
+    return new RegExp('^(?:\\p{Extended_Pictographic}|\\p{Emoji_Modifier}|\\p{Regional_Indicator}|\\u200d|\\ufe0f|\\s)+$', 'u');
+  } catch {
+    return null;
+  }
+})();
+const HAS_PICTOGRAPH = (() => {
+  try {
+    return new RegExp('\\p{Extended_Pictographic}|\\p{Regional_Indicator}', 'u');
+  } catch {
+    return null;
+  }
+})();
+
+function isEmojiOnly(text) {
+  if (!EMOJI_ONLY || !HAS_PICTOGRAPH) return false;
+  if (!EMOJI_ONLY.test(text) || !HAS_PICTOGRAPH.test(text)) return false;
+  // Up to three, as you would see them: "😂😂😂" is a reaction, a row of ten
+  // is a message.
+  const segmenter = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter() : null;
+  const count = segmenter
+    ? Array.from(segmenter.segment(text.replace(/\s/g, ''))).length
+    : Array.from(text.replace(/\s|\u200d|\ufe0f/g, '')).length;
+  return count <= 3;
+}
+
 function appendChat(entry, { quiet = false } = {}) {
   const wrapper = document.createElement('div');
   wrapper.className = 'message' + (entry.from === state.me?.id ? ' mine' : '');
@@ -709,7 +739,7 @@ function appendChat(entry, { quiet = false } = {}) {
   meta.textContent = `${entry.name} · ${time}`;
 
   const body = document.createElement('div');
-  body.className = 'body';
+  body.className = isEmojiOnly(entry.text) ? 'body emoji-only' : 'body';
   body.textContent = entry.text;
 
   wrapper.append(meta, body);
@@ -799,6 +829,34 @@ function togglePanel(open) {
 
 dom.btnPanel.addEventListener('click', () => togglePanel());
 dom.btnPanelClose.addEventListener('click', () => togglePanel(false));
+
+// An emoji goes into the message rather than straight out, so it can sit
+// beside words. On a phone the box is not focused, because focusing it throws
+// up the keyboard over the film for the sake of one tap.
+const TOUCH = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+
+// Pressing a button normally takes the focus, and with it the box's idea of
+// where the cursor was — so the emoji landed at the start of the sentence.
+// Keeping the focus where it is keeps the cursor too.
+dom.emojiRow.addEventListener('mousedown', (event) => event.preventDefault());
+
+dom.emojiRow.addEventListener('click', (event) => {
+  const emoji = event.target.closest('[data-emoji]')?.dataset.emoji;
+  if (!emoji) return;
+  const input = dom.chatInput;
+  // Mid-sentence if they are typing, otherwise on the end.
+  const typing = document.activeElement === input;
+  const start = typing ? input.selectionStart ?? input.value.length : input.value.length;
+  const end = typing ? input.selectionEnd ?? input.value.length : input.value.length;
+  const next = input.value.slice(0, start) + emoji + input.value.slice(end);
+  if (next.length > input.maxLength && input.maxLength > 0) return;
+  input.value = next;
+  const caret = start + emoji.length;
+  if (!TOUCH) {
+    input.focus();
+    input.setSelectionRange(caret, caret);
+  }
+});
 
 dom.composer.addEventListener('submit', (event) => {
   event.preventDefault();

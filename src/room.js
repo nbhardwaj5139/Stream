@@ -9,9 +9,26 @@ const CHAT_HISTORY_LIMIT = 200;
 const CHAT_MAX_LENGTH = 800;
 const NAME_MAX_LENGTH = 40;
 
+// Cut to a length without cutting a character in half. Most emoji are two
+// UTF-16 units, and many are several joined — a family, a flag, a skin tone —
+// so a plain slice can leave half of one behind, which shows as a broken box.
+const graphemes =
+  typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+
+export function trimToLength(text, max) {
+  if (text.length <= max) return text;
+  let out = '';
+  const pieces = graphemes ? Array.from(graphemes.segment(text), (piece) => piece.segment) : Array.from(text);
+  for (const piece of pieces) {
+    if (out.length + piece.length > max) break;
+    out += piece;
+  }
+  return out;
+}
+
 function sanitizeName(name, fallback) {
   if (typeof name !== 'string') return fallback;
-  const cleaned = name.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX_LENGTH);
+  const cleaned = trimToLength(name.replace(/\s+/g, ' ').trim(), NAME_MAX_LENGTH);
   return cleaned || fallback;
 }
 
@@ -78,7 +95,7 @@ export class Room {
 
   addChat(viewer, text) {
     if (!viewer || typeof text !== 'string') return null;
-    const body = text.replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX_LENGTH);
+    const body = trimToLength(text.replace(/\s+/g, ' ').trim(), CHAT_MAX_LENGTH);
     if (!body) return null;
     const entry = {
       id: crypto.randomUUID(),

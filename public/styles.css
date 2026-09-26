@@ -378,11 +378,40 @@ button, input, select { font: inherit; color: inherit; }
   color: var(--text);
 }
 
+.emoji-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 8px 10px 0;
+  border-top: 1px solid var(--line);
+}
+.emoji-row button {
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .12s var(--ease), transform .12s var(--ease);
+}
+.emoji-row button:hover { background: var(--surface-2); }
+.emoji-row button:active { transform: scale(.88); }
+
+/* A message that is only an emoji or three reads as a reaction, not a line
+   of text, so it is shown the way phones show them: large, on its own. */
+.message .body.emoji-only {
+  background: none;
+  border: 0;
+  font-size: 30px;
+  line-height: 1.15;
+  padding: 0 2px;
+}
+
 .composer {
   display: flex;
   gap: 8px;
-  padding: 12px;
-  border-top: 1px solid var(--line);
+  padding: 10px 12px 12px;
   padding-bottom: max(12px, env(safe-area-inset-bottom));
 }
 .composer input {

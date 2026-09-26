@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Room } from '../src/room.js';
+import { Room, trimToLength } from '../src/room.js';
 import {
   AttemptLimiter,
   clientAddress,
@@ -98,6 +98,28 @@ test('chat trims, caps and attributes messages', () => {
   for (let i = 0; i < 250; i++) room.addChat(viewer, `m${i}`);
   assert.equal(room.chat.length, 200, 'history is bounded');
   assert.equal(room.chat.at(-1).text, 'm249');
+});
+
+test('emoji survive a message, and the length limit never cuts one in half', () => {
+  const room = new Room();
+  const viewer = room.addViewer({ name: 'Sam' });
+  assert.equal(room.addChat(viewer, 'that twist 😂🍿❤️').text, 'that twist 😂🍿❤️');
+
+  // An emoji straddling the 800 limit is dropped whole, not split into a
+  // broken box.
+  const edge = room.addChat(viewer, 'x'.repeat(799) + '😂').text;
+  assert.equal(edge, 'x'.repeat(799));
+  assert.doesNotMatch(edge, /[\uD800-\uDFFF]/, 'no half of anything left behind');
+
+  // Emoji made of several joined together are kept or dropped as one.
+  const family = '👨‍👩‍👧';
+  assert.equal(trimToLength(`ab${family}`, 4), 'ab');
+  assert.equal(trimToLength(`ab${family}`, 2 + family.length), `ab${family}`);
+  assert.equal(trimToLength('🇪🇸🇪🇸', 5), '🇪🇸', 'a flag is two symbols, kept together');
+
+  // Names are held to the same rule.
+  const named = room.addViewer({ name: 'x'.repeat(39) + '😂' });
+  assert.equal(named.name, 'x'.repeat(39));
 });
 
 test('presence lists who is here and nothing private', () => {
