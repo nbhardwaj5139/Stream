@@ -547,3 +547,25 @@ test('a guest cannot change the look of the room', async () => {
   assert.match(await (await fetch(`${base}/`)).text(), /data-theme="classic"/);
   await room.close();
 });
+
+test('clearing the surprise takes it off a guest who is already here', async () => {
+  const room = await freshRoom();
+  const base = `http://127.0.0.1:${room.server.address().port}`;
+  const hostCookie = await joinFor(HOST_PASSCODE, base);
+  const guest = await room.join(GUEST_PASSCODE);
+  await guest.next('welcome');
+
+  await post(base, hostCookie, { surprise: 'Soon 🙂' });
+  await guest.next((m) => m.type === 'surprise' && m.text === 'Soon 🙂');
+  await post(base, hostCookie, { surprise: '   ' });
+  const cleared = await guest.next((m) => m.type === 'surprise' && m.text === '');
+  assert.equal(cleared.text, '', 'told, so their screen goes back to the ordinary one');
+
+  // And someone arriving now gets no surprise at all.
+  const late = await room.join(GUEST_PASSCODE);
+  assert.equal((await late.next('welcome')).surprise, undefined);
+
+  guest.close();
+  late.close();
+  await room.close();
+});

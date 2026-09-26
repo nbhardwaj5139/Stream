@@ -298,7 +298,14 @@ function handleMessage(message) {
       break;
 
     case 'surprise':
-      revealSurprise(message.text);
+      if (message.text) {
+        revealSurprise(message.text);
+      } else {
+        // Cleared by the host: back to the ordinary waiting screen.
+        state.surprise = null;
+        if (!dom.reveal.hidden) closeReveal();
+        if (!showingScreen() && !screenShare.sharing) renderWaiting();
+      }
       break;
 
     case 'room-name':

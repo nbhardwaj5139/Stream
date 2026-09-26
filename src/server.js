@@ -367,8 +367,9 @@ export async function createServer(options = {}) {
         onSettingsChange({ roomName, surprise, theme });
         broadcast({ type: 'room-name', name: roomName });
         if (themeChanged) broadcast({ type: 'theme', theme });
-        // A new message is revealed to whoever is already here, too.
-        if (surpriseChanged && surprise) broadcastToGuests({ type: 'surprise', text: surprise });
+        // A new message is revealed to whoever is already here, too — and a
+        // cleared one leaves their screen, back to the ordinary waiting one.
+        if (surpriseChanged) broadcastToGuests({ type: 'surprise', text: surprise });
       }
       sendJson(res, 200, { roomName, surprise, theme });
       return;
