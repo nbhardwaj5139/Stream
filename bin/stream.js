@@ -318,6 +318,13 @@ if (options.tunnelName) {
   }
 }
 
+// The passcodes, before anything that can be slow. Connecting the tunnel can
+// take a while — or never happen, on a network that blocks it — and nobody
+// should be left staring at "Connecting..." with no way into their own room.
+console.log(`\n  Your passcode:   ${hostPasscode}`);
+console.log(`  Their passcode:  ${guestPasscode}`);
+console.log(`  On this laptop you can already open  http://localhost:${options.port}`);
+
 let tunnel = null;
 let supervisor = null;
 // Why the public link is not up, if it is not. Anything here means READY
