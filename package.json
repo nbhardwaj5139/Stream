@@ -2,7 +2,7 @@
   "name": "stream",
   "version": "1.0.0",
   "private": true,
-  "description": "Watch local movies together over a shared link, in sync, from any device.",
+  "description": "Share your screen, sound and all, with someone far away — from any device, with nothing to install on their side.",
   "type": "module",
   "bin": {
     "stream": "bin/stream.js"

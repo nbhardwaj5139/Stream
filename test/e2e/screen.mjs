@@ -10,15 +10,22 @@
 // moved, a handler that never runs, a negotiation a browser refuses. None of
 // which a stub can tell you about.
 import { chromium } from 'playwright';
-import path from 'node:path';
 import { createServer } from '../../src/server.js';
 
-const MEDIA_DIR = process.argv[2] ?? path.join(process.cwd(), 'test', 'fixtures');
 const EXECUTABLE = process.env.CHROMIUM_PATH || undefined;
 const HOST_PASSCODE = 'HOSTS1';
 const GUEST_PASSCODE = 'GUESTS';
 
 let failures = 0;
+
+async function until(predicate, timeout) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return false;
+}
 function check(label, condition, detail = '') {
   const ok = Boolean(condition);
   if (!ok) failures += 1;
@@ -26,7 +33,6 @@ function check(label, condition, detail = '') {
 }
 
 const server = await createServer({
-  roots: [MEDIA_DIR],
   hostPasscode: HOST_PASSCODE,
   guestPasscode: GUEST_PASSCODE,
 });
@@ -107,6 +113,39 @@ try {
     const after = await host.textContent('#link-text');
     check('and the recovered connection carries data', /kbps|Mbps/.test(after ?? ''), after?.trim());
   }
+
+  // The host's own connection to the site blinks — a Wi-Fi hiccup, the tunnel
+  // reconnecting. The capture and the picture are separate from it, so nobody
+  // should have to press Share again: the host's browser reclaims the share.
+  const hostId = server.room.sharerId;
+  for (const client of server.wss.clients) {
+    if (client.data.viewerId === hostId) client.socket.destroy();
+  }
+  console.log("  ..    host's connection to the site cut; nobody touches anything");
+
+  const reclaimed = await until(() => server.room.sharerId && server.room.sharerId !== hostId, 20_000);
+  check('the host takes the share back by itself', reclaimed);
+
+  const pictureBack = await guest
+    .waitForFunction(() => {
+      const video = document.querySelector('#video');
+      return video?.srcObject && video.videoWidth > 0 && !video.hidden;
+    }, { timeout: 30_000 })
+    .then(() => true)
+    .catch(() => false);
+  check('and the picture is back on the other side', pictureBack);
+
+  if (pictureBack) {
+    const moving = await guest.evaluate(async () => {
+      const video = document.querySelector('#video');
+      const first = video.currentTime;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      return video.currentTime > first;
+    });
+    check('and moving', moving);
+  }
+  const stillSharing = await host.textContent('#btn-share');
+  check('the host never had to press Share again', /Stop sharing/.test(stillSharing ?? ''), stillSharing?.trim());
 } finally {
   await hostBrowser.close();
   await guestBrowser.close();

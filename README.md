@@ -1,533 +1,296 @@
 # Stream
 
-Watch the movies on your laptop together with someone in another country.
+Share your screen, sound and all, with someone far away — to watch a film
+together from opposite sides of the world.
 
-You run one command and get a link and a passcode. You text her both. She opens
-the link on a PC, an iPad, a phone — anything with a browser — types the
-passcode, and she's in the room. Same movie, same moment, either of you can
-pause. Nothing to install on her side, no account to create.
+You press one button on your laptop and get a link and a passcode. The other
+person opens the link on a PC, an iPad, a phone — anything with a browser —
+types the passcode, and sees your screen. Play the film in VLC, a browser, or
+anything else, and it arrives on their side with its sound. Nothing to install
+on their side, no account to create.
 
 ```
-$ node bin/stream.js "D:\Movies"
+══════════════════════════════════════════════════════════════
+  READY. Send them the link and passcode above.
 
-Found 38 video files in:
-  D:\Movies
+  Then on THIS laptop open  https://movies.example.com
+  sign in with  R3XB9T  and click "Share screen".
 
-  Using h264_nvenc for 4K re-encoding (GPU accelerated).
-
-Starting public link... done
-
-──────────────────────────────────────────────────────────────
-  Send her this link and this passcode:
-
-    https://quiet-forest-1234.trycloudflare.com
-    passcode:  K7M4PQ
-
-  Your own passcode (same link):  R3XB9T
-──────────────────────────────────────────────────────────────
+  Pick "Entire Screen" and tick "Share system audio" —
+  that tickbox is the only way the sound travels.
+══════════════════════════════════════════════════════════════
 ```
 
-The passcode is never in the URL, so the link is safe to paste anywhere. She
-enters it once and her browser remembers her for 30 days.
+The picture goes straight from your browser to theirs. It never passes through
+the server or through Cloudflare, which only carries the page and the
+handshake.
 
-## Getting started
+## Setting a laptop up (Windows)
 
-**Requirements**
+Once per laptop. Download **`Install-Stream.cmd`** from this repository (open
+the file on GitHub, then *Download raw file*) and double-click it.
 
-- **Node 18+** — the app itself has zero npm dependencies.
-- **ffmpeg** — needed for `.mkv`, `.avi`, HEVC video, AC3/DTS audio, and
-  anything 4K. Only plain `.mp4`/`.webm` work without it.
-- **cloudflared** *(recommended)* — creates the public link. Without it you can
-  still watch together on the same Wi-Fi.
+Windows will say *"Windows protected your PC"* the first time, because the file
+came from the internet: click **More info → Run anyway**.
 
-```powershell
-winget install Gyan.FFmpeg
-winget install Cloudflare.cloudflared
-```
+It then does everything, checking first whether each step is already done, so
+running it again is always safe:
+
+1. installs whichever of Git, Node.js and cloudflared are missing
+2. downloads this project to your user folder
+3. opens a browser to log in to Cloudflare — pick your domain
+4. asks, in a normal Windows box, which address to use (e.g.
+   `movies.example.com`), and sets up a tunnel for it named after this
+   computer, so two laptops never share one
+5. puts a **Start Stream** button on the desktop, and makes it start by itself,
+   minimised, whenever you log in
+6. asks whether to keep the laptop awake while it is on the charger — a
+   sleeping laptop takes the site down with it
+
+Your domain has to be on Cloudflare. Setting up a second laptop moves the
+address to it; the first one stops answering.
+
+## Every time
+
+1. **Start Stream** — or nothing at all, if it starts with Windows.
+2. Wait for **READY** in its window. It says so only once the link actually
+   works; if it cannot connect it says **NOT READY** and why, and keeps trying
+   by itself — handy when Windows starts before the Wi-Fi does.
+3. Open the link, sign in with **your** passcode, press **Share screen**, pick
+   **Entire Screen**, and tick **Share system audio**.
+4. Send the other person the link and **their** passcode.
+
+Leave that window open (minimised is fine) — closing it takes the site down.
+Each time it starts it first pulls the latest version of the project, and
+carries on with what it has if that fails.
+
+## On the other side
+
+Open the link, type the passcode (capitals don't matter), and wait. The screen
+appears by itself when it is shared.
+
+**If the picture arrives without sound on an iPhone or iPad**, check the
+ring/silent switch on the side first: iOS mutes video when it is set to silent,
+whatever the page does. Beyond that, no browser will start a video with sound
+until someone touches the page, so it starts muted and says *"Tap anywhere for
+sound"* until it is tapped.
+
+## When it will not connect
+
+**A link that works is not the same as a picture that works.** The link is
+ordinary HTTPS through the tunnel and will load on any connection, anywhere. The
+picture is peer to peer, which is why it can fail while everything else looks
+fine. Home broadband is usually happy; mobile data usually is not, because
+carriers put everyone behind a shared address that cannot be connected back to.
+That is the case a TURN relay exists for:
 
 ```bash
-# macOS / Linux
-brew install ffmpeg cloudflared
+node bin/stream.js --turn turn:relay.example.com:3478 --turn-user someone --turn-pass secret
 ```
 
-**Run it**
+Any TURN service works; several have a free tier that is ample for two people.
+It is remembered after the first run. If you would rather the password never
+touched the disk, set `STREAM_TURN_URL`, `STREAM_TURN_USER` and
+`STREAM_TURN_PASS` in the environment instead; `--no-turn` ignores a remembered
+one. A relay on TCP port 443 (`turns:relay.example.com:443`) gets through
+networks that block everything else — the one to reach for when a hotel or an
+office is involved.
 
-```bash
-git clone https://github.com/nbhardwaj5139/Stream.git
-cd Stream
-node bin/stream.js "D:\Movies"
-```
+Three ways to find out before anybody is waiting:
 
-After that, **double-click `start.cmd`** (or run `start.sh` on macOS/Linux).
-It finds the project wherever it lives, pulls the latest version, and starts
-the room — ending on a banner that says **READY** once the tunnel has really
-connected, or **NOT READY** and why if it has not, so a broken link is caught
-on your side rather than theirs.
+- **`node bin/stream.js --check`** asks the relay for an allocation exactly as a
+  browser would, so a wrong password or a blocked port is a line of output
+  rather than a silent black screen. It also checks the port, that cloudflared
+  serves the address you think it does, and that DNS points at Cloudflare — and
+  separates what would stop the evening from what is merely worth knowing.
+- **Test link**, in the chat panel, with both of you on the page, opens the same
+  kind of connection a share would and says what happened: connected directly,
+  through a relay, or not at all.
+- **Test link pressed alone** tests what one side can answer by itself — most
+  of it. It asks each STUN server separately and compares the public port each
+  reports. A router that answers every destination from one port can be
+  connected back to; one that gives a different port per destination cannot,
+  and that is what mobile carriers do. So send the link, have them press the
+  button wherever they are — on Wi-Fi, then on mobile data — and you know days
+  early whether a relay is optional or essential.
 
-No folder is needed and none is looked for: screen sharing carries anything
-you can play. To serve files from disk as well, pass a folder each time —
-`node bin/stream.js "D:\Movies"`. On a laptop that has been through
-`setup-tunnel.js`, it picks up that tunnel and hostname by itself, so the
-first double-click works as well as the hundredth.
+## When the connection drops
 
-Keep your laptop awake and the terminal open. When you press Ctrl+C the link
-stops working.
+Films are long and networks are not perfect, so nothing here gives up.
 
-New passcodes are generated for each session, so last week's code stops working
-when the evening ends.
+- **The picture.** A dropped peer connection is offered again with backoff — a
+  second, two, four, out to about half a minute — then every thirty seconds
+  for as long as the share lasts. A network that is out for ten minutes should
+  not end the evening, and nobody should have to go to the laptop to restart it.
+- **A viewer can ask for the picture again.** The host cannot tell a viewer
+  watching happily from one staring at nothing, so a viewer with no picture asks
+  after ten seconds — which covers a reloaded tab, or a peer that went away
+  without saying so. The host honours one such request per viewer every five
+  seconds, so a viewer stuck in a loop cannot make it renegotiate continuously.
+- **The host's connection to the site.** If it blinks, the capture and the
+  picture carry on, and the host's browser takes the share back by itself on
+  reconnecting. Nobody presses Share again.
+- **The tunnel.** If cloudflared drops — the laptop slept, the network changed
+  — it is restarted by itself, and the window says so.
 
-A restart within four hours is treated as the same session and keeps the codes.
-A crashed server, a closed window or a laptop that slept should not lock out
-somebody in another country holding a code that was right ten minutes ago —
-particularly since the room asks for the passcode on every page load, so a
-phone discarding a backgrounded tab is enough to strand them. Past four hours
-the evening is over and the codes rotate.
+A shared screen is live, so there is nothing to pause or rewind: what played
+while a connection was down is gone. If one of you drops, pause the film in the
+player on the host machine.
 
-`--keep-passcodes` always reuses the saved pair, `--new-passcodes` always makes
-a fresh one, and `--passcode` / `--host-passcode` pin your own.
+## The connection, in numbers
 
-The passcode is asked for every time the page is opened, including a reload —
-loading the page drops the session, and the passcode screen is part of the page
-rather than a separate one, so joining never navigates away from it.
+Open the chat panel during a share and there is a line like
+`1080p 30fps · 6.2 Mbps · 84ms`, with a dot that turns amber and then red as it
+degrades. The host sees what it is sending to whoever is having the worst time;
+a viewer sees what they are receiving. "It looks blurry" becomes a number, and
+usually the answer is a lower `--share-quality`.
+
+The picture goes out at 1080p by default, whatever the monitor shows.
+`--share-quality 1440` or `2160` sends more, but the ceiling is your upload, not
+the setting: 1080p wants about 8 Mbps sustained and 4K about 28. Ask for more
+than the connection carries and WebRTC simply drops back down, having spent the
+CPU for nothing. It is a live re-encode of the screen, so it is softer than the
+original file and dark scenes can band.
+
+Both ends hold a screen wake lock while a screen is being shown: a host screen
+going dark stops the capture, and a tablet dimming mid-scene is its own small
+misery.
+
+## Passcodes
+
+There are two: **yours** makes you the host, **theirs** makes them a guest. Only
+the host can share a screen.
+
+New passcodes are made for each session, so last week's stops working when the
+evening ends. A restart within four hours counts as the same session and keeps
+them: a crash or a laptop that slept should not lock out somebody holding a code
+that was right ten minutes ago — particularly as the passcode is asked for every
+time the page is opened, so a phone discarding a backgrounded tab is enough to
+need it again. `--keep-passcodes` always reuses the saved pair, `--new-passcodes`
+always makes a fresh one, and `--passcode` / `--host-passcode` pin your own.
 
 ## Options
 
 ```
--d, --dir <path>          Folder to serve (repeatable; default ~/Movies or ~/Videos)
 -p, --port <number>       Port to listen on (default 8420)
     --passcode <code>     Set the guest passcode instead of generating one
     --host-passcode <code>  Set your own passcode
     --keep-passcodes      Always reuse the saved passcodes
     --new-passcodes       Force a fresh pair, even just after a restart
-    --host-only           Only you can play/pause/seek; the other side watches
-    --shared-library      Let them browse your files too (default: host only)
     --room-name <text>    Heading on the passcode screen
     --share-quality <n>   720, 1080 (default), 1440 or 2160
     --hostname <domain>   Your own domain, e.g. movies.example.com
     --tunnel-name <name>  Run this named Cloudflare tunnel (pairs with --hostname)
-    --turn <url>          TURN relay for screen sharing (repeatable; remembered)
+    --turn <url>          TURN relay (repeatable; remembered)
     --turn-user <name>    Username for the TURN relay
     --turn-pass <secret>  Password for the TURN relay
     --no-turn             Ignore the remembered relay for this run
     --check               Check everything the evening needs, then exit
     --no-tunnel           Don't create a public link (same Wi-Fi only)
-    --auto-pause          Pause everyone while one side buffers (off by default)
-    --no-transcode        Never invoke ffmpeg
-    --software-encoding   Force CPU encoding even if a GPU encoder exists
 ```
 
-Run with no arguments at all and it repeats whatever you ran last time —
-folder, port, hostname and relay — so the everyday command is just
-`node bin/stream.js`.
+With no options it repeats last time's address, port and relay; on a laptop set
+up by the installer it reads the tunnel and address from cloudflared's own
+config, so the first start works as well as the hundredth.
 
-## Using your own domain
+## Your own domain, by hand
 
-A quick tunnel gets a new address on every restart. If you own a domain on
-Cloudflare, a **named tunnel** gives you one permanent address instead, so the
-link you sent her keeps working forever.
-
-One-time setup — this does all of it, and is safe to re-run:
+The installer does this for you. To do it without the installer, on macOS,
+Linux or Windows:
 
 ```bash
-node bin/setup-tunnel.js movies.example.com
+node bin/setup-tunnel.js movies.example.com --name movies
+node bin/stream.js
 ```
 
 It logs you in (a browser opens; pick your domain), creates the tunnel, points
-the DNS record at it, and writes cloudflared's config file — backing up any
-config you already had. Every step is skipped if it's already done.
+the DNS record at it — repointing it if it already belonged to one of your
+tunnels — and writes cloudflared's config, backing up any you already had.
+`node bin/setup-tunnel.js --check movies.example.com` diagnoses DNS that will
+not resolve.
 
-If you'd rather do it by hand, it's these four:
-
-```bash
-cloudflared tunnel login
-cloudflared tunnel create movies
-cloudflared tunnel route dns movies movies.example.com
-# then write ~/.cloudflared/config.yml (%USERPROFILE%\.cloudflared\config.yml
-# on Windows) with an ingress block for the hostname, and a
-# `- service: http_status:404` catch-all after it
-```
-
-Either way, then run:
-
-```bash
-node bin/stream.js "D:\Movies" --tunnel-name movies --hostname movies.example.com
-```
-
-If you already run cloudflared as a background service, leave it alone and just
-tell the app what address to print:
-
-```bash
-node bin/stream.js "D:\Movies" --hostname movies.example.com --no-tunnel
-```
-
-Either way your laptop still has to be awake and running the server — Cloudflare
-is a front door, not a host.
-
-### Giving someone a subdomain of yours
-
-A friend can run their own room on your domain without touching your Cloudflare
-account:
-
-```bash
-node bin/setup-tunnel.js friend.example.com --for-someone-else
-```
-
-That creates the tunnel and the DNS record on your account, then writes a
-folder holding the tunnel's credentials, a matching config, and instructions.
-Send them the folder.
-
-The credentials authorise **that one tunnel** and nothing else — they cannot
-reach your other records, your other tunnels, or your account, and
-`cloudflared tunnel delete friend` revokes it. They can point it at anything on
-their own machine, though, so the hostname is theirs to use as they like: a
-question of trust rather than of permissions.
-
-Their room is entirely separate from yours — own server, own passcodes, own
-guests. If they would rather not depend on your domain at all, running
-`node bin/stream.js` with no tunnel options gives them a free throwaway address
-and needs nothing from you.
-
-**Watch on the host machine using `http://localhost:8420`, not your domain.**
-Going through the tunnel sends the film out to Cloudflare and straight back,
-so your upload carries it twice and both of you stutter. The local address
-plays it off the disk and leaves the whole connection for her. The startup
-banner prints both.
+Without a domain, `node bin/stream.js` makes a free throwaway address instead,
+different each time.
 
 ### What a domain does and doesn't protect
 
-It genuinely gives you:
+It gives you real HTTPS on your own domain, no open ports and no exposed home
+address — the tunnel dials out, and nothing on the router is forwarded inward —
+and DDoS filtering at Cloudflare's edge.
 
-- **Real HTTPS** on a certificate for your own domain.
-- **No open ports and no exposed home IP.** The tunnel dials out; nothing on
-  your router is forwarded inward, and your address never appears in DNS.
-- **DDoS filtering** at Cloudflare's edge, before anything reaches your laptop.
-
-It does not, by itself, keep anyone out. The passcode is still the only thing
-standing between a visitor and your library, and a permanent domain is *more*
-discoverable than a random quick-tunnel address, not less — every certificate
-Cloudflare issues for `movies.example.com` is published in the public
-Certificate Transparency logs, which people scan. Expect strangers to find the
-door eventually; the rate limiter is what makes that boring rather than
-dangerous.
-
-If you want a real second lock, put **Cloudflare Access** in front of the
-hostname (Zero Trust → Access → Applications). It's free for small numbers of
-users, and it authenticates people at Cloudflare's edge — by email one-time
-code, Google, whatever — so an unauthorised visitor never reaches your laptop
-at all. Then the passcode becomes the second factor rather than the only one.
-The one cost is that she has to pass Cloudflare's login as well as the
-passcode, which is more friction on an iPad.
-
-One caveat worth knowing: Cloudflare's self-serve terms restrict using the
-proxy to serve large volumes of video. Two people watching a film a week is
-not what that rule is aimed at, but sustained heavy streaming through an
-orange-clouded hostname has gotten people warned before. If that matters to
-you, Tailscale is the alternative — no ToS question, at the cost of installing
-an app on her device.
-
-## How the syncing works
-
-The server keeps one piece of truth: *the movie was at position P at server-time
-T, playing at rate R*. From that, any browser can work out where it should be
-right now.
-
-Each browser measures its clock offset against the server (a few round trips,
-keeping the fastest sample, which has the least queuing noise), then compares
-where it actually is against where it should be:
-
-- **under 0.25s out** — leave it alone, nobody can tell.
-- **0.25s to 1.5s out** — nudge the playback rate by ±6% for a few seconds.
-  Time stretches slightly instead of the picture jumping; you don't notice.
-- **over 1.5s out** — seek. Something real happened (a stall, a tab that slept).
-
-`--auto-pause` will pause the room for everyone while one side buffers and
-resume when they recover, so nobody has to say "wait, go back". It is **off by
-default**, because on a connection that is marginal rather than fine it
-oscillates: pause, resume, stall, pause again, which is worse to watch than a
-bit of drift. When it is on, the wait is capped at 30 seconds so a viewer who
-never becomes playable cannot hold the film indefinitely.
-
-## Sharing your screen instead
-
-**Share screen** is the main button, host only, and the one to reach for first:
-it carries anything your machine can play, at any resolution, to any browser. It switches
-the room from playing a file to sending whatever is on your screen, over a
-direct connection to each viewer. The picture never passes through the server.
-
-Use it when the file route is fighting you. It has one decisive advantage: it
-measures the link continuously and drops quality to fit. An HTTP stream picks a
-bitrate and stalls when the connection cannot keep up; a screen share goes soft
-for a second and carries on. On a connection that is merely adequate, that is
-the difference between watching a film and managing one.
-
-It also sidesteps formats entirely. Nothing is transcoded, no container is
-negotiated, and a browser that struggles with your files will show a shared
-screen without complaint.
-
-What it costs:
-
-- **Quality.** The picture is captured and re-encoded live, so it is softer than
-  the file, and dark scenes band. It goes out at 1080p by default, whatever the
-  monitor is showing. `--share-quality 1440` or `2160` will send more, but the
-  ceiling is your upload, not the setting: 1080p wants about 8 Mbps sustained
-  and 4K about 28. Ask for more than the connection carries and WebRTC simply
-  drops back down, having spent the CPU for nothing.
-- **Your laptop encodes continuously** while it runs.
-- **Sound needs the right option in the picker.** On Windows, Chrome offers
-  audio for **Entire Screen** and for a **Chrome Tab**, and never for a single
-  window — which is the option most people try first, because it is the one
-  that names the app they are playing. To share a film from VLC you want
-  *Entire Screen* with "Share system audio" ticked. The room says so before the
-  picker opens and again if nothing came through, and if the machine refuses
-  audio entirely the share continues without it rather than failing.
-- **It needs a connection the two networks will allow.** Public STUN is used by
-  default, which is enough when both routers accept an incoming connection.
-  Some mobile carriers and locked-down networks will not, and then nothing
-  connects without a relay to pass the media through:
-
-  ```bash
-  node bin/stream.js --turn turn:relay.example.com:3478 \
-                     --turn-user someone --turn-pass secret
-  ```
-
-  Any TURN service works; several offer a free tier that is ample for two
-  people. It is remembered after the first run, so the flags are typed once
-  rather than on the night. If you would rather the password never touched
-  the disk, set `STREAM_TURN_URL`, `STREAM_TURN_USER` and `STREAM_TURN_PASS`
-  in the environment instead, and `--no-turn` ignores a remembered one.
-
-  A relay on TCP port 443 (`turns:relay.example.com:443`) gets through
-  networks that block everything else, at the cost of a little latency. It is
-  the one to reach for when a hotel or an office is involved.
-
-  File streaming is plain HTTPS through the tunnel and never has this
-  problem — which is the main reason to keep it.
-
-  **A link that works is not the same as a picture that works.** The link is
-  ordinary HTTPS through the tunnel and will load on any connection, anywhere.
-  The picture is peer-to-peer and never touches the server, which is why it
-  can fail while everything else looks fine. Home broadband is usually happy;
-  mobile data usually is not, because carriers put everyone behind a shared
-  address that cannot be connected back to. That is the case a relay exists
-  for.
-
-  **Check the relay itself from the command line**, which does not need anyone
-  at the other end:
-
-  ```bash
-  node bin/stream.js --check
-  ```
-
-  It asks the relay for an allocation exactly as a browser would and prints the
-  address media would come from, so a wrong password or a blocked port is a
-  line of output rather than a silent black screen. It also checks the rest of
-  what the evening needs — the folders, the port, that cloudflared is serving
-  the hostname you think it is, that DNS points at Cloudflare — and separates
-  what would stop the evening from what is merely worth knowing.
-
-  **Find out what the two networks will actually do.** Open the chat panel and press **Test link**.
-  It opens the same kind of connection a share would need, carrying a few bytes
-  instead of a film, and says what happened: connected directly, connected
-  through a relay, or could not connect — in which case a relay is what you
-  need. Both sides have the button, and it takes a few seconds. Far better on a
-  Tuesday than with someone waiting.
-
-  **Pressed alone, the same button tests what one side can answer by itself** —
-  which is most of it, and needs only one of you on the page. It asks each STUN
-  server separately and compares the public port each reports back. A router
-  that answers every destination from the same port can be connected back to;
-  one that gives a different port per destination cannot, because neither side
-  can predict where to send the first packet. That second case is what mobile
-  carriers do to everybody, and it is the real reason "it works on my wifi" and
-  "it works on my phone" are different claims. The verdict is one of four: this
-  network is fine, it needs the relay and the relay works, it needs a relay
-  that is not turned on, or it is blocking the whole idea. So you can send
-  somebody the link, have them press the button wherever they are, and find out
-  days before anyone is waiting.
-
-- **You can see what the connection is doing.** Open the chat panel during a
-  share and there is a line reading something like `1080p 30fps · 6.2 Mbps ·
-  84ms`, with a dot that turns amber and then red as it degrades. The host sees
-  what it is sending to whoever is having the worst time of it; a viewer sees
-  what they are receiving. "It looks blurry" becomes a number you can act on —
-  and usually the action is dropping `--share-quality` a step.
-
-- **The screen is kept awake while something is on.** A host screen going dark
-  stops the capture, and a tablet dimming mid-scene is its own small misery.
-  Both ends hold a wake lock while a film is playing and release it when
-  nothing is. A browser that refuses is no problem; it simply carries on.
-
-- **A connection that drops is offered again, for as long as the film runs.**
-  Films are long and networks are not perfect. A failed peer connection is
-  re-offered with backoff — a second, then two, then four, out to about half a
-  minute of quick attempts — and the room says "Connection dropped —
-  reconnecting…" while it does. After that it does not give up: it keeps
-  offering every thirty seconds until the share ends, saying "still trying" so
-  it does not look like it has stopped caring. A network that is out for ten
-  minutes of a two-hour film should not end the evening, and nobody should have
-  to walk to the laptop to restart the share.
-
-  Only the side holding the picture offers; the other waits to be offered. But
-  a viewer can ask. The host cannot tell the difference between a viewer
-  watching happily and one staring at nothing, so a viewer with no picture asks
-  for one after ten seconds — which covers a reloaded tab, or a peer that went
-  away without saying so. The host honours one such request per viewer every
-  five seconds, because a viewer stuck in a loop would otherwise have the host
-  renegotiating continuously and break the very connection it was recovering.
-
-Playback controls do nothing during a share, because a live stream has nothing
-to seek. Picking a film from the library ends the share by itself, and the room
-comes out of screen mode by itself if whoever was sharing closes their tab.
-
-**If the picture arrives without sound on an iPhone or iPad**, check the
-ring/silent switch on the side of the device first. iOS mutes inline video when
-that switch is set to silent, no matter what the page does. Beyond that, a
-browser will not start a video with sound until someone touches the page, so
-the picture starts muted and the room says *"Tap anywhere for sound"* until it
-is tapped.
-
-## Quality, and what 4K actually costs
-
-There are two ways a file reaches her, and the quality selector in the player
-picks between them:
-
-**Original** sends the file byte-for-byte with HTTP range requests. No
-re-encoding, no quality loss, seeking is instant, and your laptop barely does
-any work. This is the real thing — the original picture and the original audio
-track, surround included.
-
-**1080p / 720p / 480p** runs the file through ffmpeg. Streams that are already
-browser-safe get copied rather than re-encoded, so a typical `.mkv` holding
-H.264 + AC3 only re-encodes the audio — the picture is untouched.
-
-For 4K, "original" is usually a lie you can't afford. A 4K remux runs 40–80
-Mbps; no home upload link carries that, and her connection can't receive it. So
-when you pick a 4K file the room **starts at 1080p on purpose**. You can push it
-back to Original if your upload is genuinely fast enough, but that is the honest
-default.
-
-Three things follow from that, and they're the difference between 4K looking
-right and looking terrible:
-
-- **Hardware encoding.** Re-encoding 4K with the CPU cannot keep up in real
-  time — it will stutter. The server looks for `h264_nvenc` (NVIDIA),
-  `h264_qsv` (Intel) or `h264_amf` (AMD) and uses whichever it finds, and tells
-  you at startup which one it picked. If it says `libx264`, 4K will be rough.
-- **HDR tone mapping.** Most 4K is HDR. Re-encoding HDR to SDR without tone
-  mapping produces a washed-out grey picture — the single most common way
-  transcoded 4K gets ruined. The server detects HDR from the colour transfer
-  and applies a Hable tone map. This needs an ffmpeg built with `zimg`; the
-  standard Windows builds have it.
-- **Surround audio survives.** AC3/DTS has to become AAC for browsers, but the
-  channel layout is kept rather than flattened to stereo, at 384 kbps for 5.1.
-  Her device downmixes if it needs to.
-
-Subtitles are found automatically: `Movie.srt`, `Movie.en.srt` and friends next
-to the file, plus text tracks embedded in the `.mkv`. SRT and ASS/SSA are
-converted to WebVTT on the fly. Bitmap subtitles (PGS, VOBSUB) are not supported
-— they're images, and would have to be burned into the picture.
-
-## What each side can do
-
-| | Host (your passcode) | Guest (her passcode) |
-|---|---|---|
-| Watch, chat | yes | yes |
-| Play, pause, seek | yes | yes, unless `--host-only` |
-| **See the file list** | yes | **no**, unless `--shared-library` |
-| Choose the movie | yes | no, unless `--shared-library` |
-| Change quality | yes | yes |
-| Rescan the folder | yes | no |
-| See your folder paths | yes | no |
-
-By default a guest never sees what's on your disk — only the film that's
-playing right now. That isn't just a hidden button: the file list is left out
-of everything sent to her, and the streaming routes refuse any id that isn't
-the current film, so an id kept from an earlier evening stops working the
-moment you change films. `--shared-library` lets her browse and pick if you
-want that instead.
-
-Keyboard: <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> jump 10s ·
-<kbd>esc</kbd> close the library.
+It does not keep anyone out by itself. The passcode is still the lock, and a
+permanent domain is *more* discoverable than a throwaway one: every certificate
+issued for it is published in public Certificate Transparency logs, which people
+scan. Expect strangers to find the door; the rate limiter is what makes that
+boring rather than dangerous. For a second lock, put **Cloudflare Access** in
+front of the hostname (Zero Trust → Access → Applications): free for a few
+users, and an unauthorised visitor never reaches the laptop at all — at the cost
+of a login page before the passcode.
 
 ## Known limits
 
-- **Seeking in a transcoded file restarts ffmpeg** at the new position, so it
-  takes a second or two to resume. Original-quality files seek instantly.
-- **Your laptop has to stay awake** with the terminal open.
-- **Cloudflare quick tunnels get a new address each run.** The passcode stays
-  the same, but the domain changes. Use your own domain with a named tunnel
-  (see above) for an address that never changes.
-- **Upload speed is the real ceiling.** 1080p is roughly 8 Mbps, 720p about 4.
-  If she keeps buffering, drop a step — that's what the selector is for. And
-  watch locally yourself, or your upload is carrying the film twice.
-- **Two browsers needing different formats means two encodes.** Chrome takes
-  fragmented MP4 and Safari takes HLS, so a laptop and an iPhone watching the
-  same converted film run ffmpeg twice. A GPU encoder shrugs at that; software
-  x264 will not.
-- **A shared screen is capped at 1080p and is not the original picture.** It is
-  a live re-encode of what your monitor shows. For the file route, 4K is capped
-  by your upload rather than by the code.
+- **The laptop has to be on, awake and logged in**, with the Start Stream window
+  open. Cloudflare is a front door, not a host.
+- **Sound travels only with "Entire Screen".** On Windows, Chrome offers audio
+  for Entire Screen and for a Chrome tab, never for a single window — which is
+  the option people reach for first, because it names the app. The room says so
+  if a share arrives silent.
+- **Some network pairs need a relay** (see above), and without one those
+  networks will not connect at all.
+- **Upload speed is the ceiling.** 1080p wants about 8 Mbps sustained.
+- **Sharing needs a desktop browser.** Phones and tablets can watch but not
+  share: iOS and Android browsers do not offer screen capture.
 
 ## Security
 
-The passcode is the credential. Anyone who has the link *and* the passcode can
-browse and watch the folders you shared.
+The passcode is the credential. Anyone with the link *and* the guest passcode
+sees whatever you share while you share it.
 
-- Passcodes are new for every session by default (a restart within four hours
-  being the same session), so a code that leaks is only
-  good until you restart.
-- Case is not part of a passcode. The field renders uppercase, phone keyboards
-  capitalise and laptop keyboards do not, so a code read off a screen and typed
-  back has to work either way.
-- Passcodes are hashed with scrypt and compared in constant time.
-- Wrong guesses are rate limited per address, with a global cap so the guessing
-  can't just be spread across many addresses. Five wrong tries locks that
-  address out for fifteen minutes.
+- Passcodes are hashed with scrypt and compared in constant time. Case is not
+  part of a passcode: a code read off a screen has to work whether a phone
+  capitalised it or a laptop did not.
+- Wrong guesses are rate limited per address, with a global cap so guessing
+  cannot be spread across many addresses. Five wrong tries locks that address
+  out for fifteen minutes. Behind the tunnel the real visitor is read from
+  `CF-Connecting-IP`, so this counts people rather than lumping everyone
+  together.
 - A correct passcode is exchanged for a signed, `HttpOnly` session cookie. The
-  passcode itself is never in a URL, so it can't leak through browser history,
-  referrer headers or a screenshot of the address bar.
-- Files are addressed by an opaque id, never by a path from the request, so
-  there's no way to walk out of the folders you chose.
-- Only video files inside those folders are ever served.
-- Behind a tunnel the real visitor is read from `CF-Connecting-IP`, so the rate
-  limiter counts people rather than lumping everyone into one bucket.
+  passcode is never in a URL, so it cannot leak through browser history,
+  referrer headers, or a screenshot of the address bar.
+- Nothing on your disk is served. The server holds the page, the passcode check
+  and the handshake — the picture goes browser to browser.
 
-There's no TLS of its own — the Cloudflare tunnel provides HTTPS. This is built
-for two people who know each other, not for the open web.
+There is no TLS of its own; the Cloudflare tunnel provides HTTPS. This is built
+for people who know each other, not for the open web.
 
 ## Development
 
 ```bash
-npm test          # 189 unit and integration tests, no dependencies needed
+npm test          # unit and integration tests, no dependencies needed
 
 # optional: two real browsers, end to end
 npm install --no-save playwright
 npx playwright install chromium
-
-node test/e2e/screen.mjs    # the screen share, and its recovery
-node test/e2e/browser.mjs /path/to/a/folder/with/a/video   # file playback, in sync
+node test/e2e/screen.mjs    # a share, its recovery, and a host reconnecting
 ```
 
 | File | Does |
 |---|---|
-| `start.cmd` / `start.sh` | double-clickable launchers that work from anywhere |
-| `bin/stream.js` | CLI, passcode generation and persistence, tunnel startup |
-| `src/roots.js` | turning command-line arguments into folders to serve |
+| `Install-Stream.cmd` / `install.ps1` | one-double-click set-up of a Windows laptop |
+| `start.cmd` / `start.sh` | the Start Stream button: update, then start |
+| `bin/stream.js` | passcodes, the tunnel, the READY banner |
+| `bin/setup-tunnel.js` | one-time wiring of a permanent address on your domain |
+| `src/server.js` | the page, the passcode check, WebSocket signalling |
+| `src/room.js` | who is here, whose screen is showing, the chat |
+| `src/auth.js` | passcode hashing, session cookies, brute-force limiting |
+| `src/ws.js` | a small RFC 6455 WebSocket server (keeps dependencies at zero) |
+| `src/tunnel.js` | running cloudflared, and keeping it running |
+| `src/cloudflare.js` | tunnel discovery, DNS diagnosis, cloudflared config |
 | `src/preflight.js` | the `--check` run: what has to be true before the evening |
 | `src/turn.js` | a STUN/TURN client, to prove a relay works before it is needed |
-| `bin/setup-tunnel.js` | one-time wiring of a permanent address on your domain |
-| `src/cloudflare.js` | tunnel discovery and cloudflared config generation |
-| `src/server.js` | HTTP routes, range streaming, WebSocket wiring |
-| `src/auth.js` | passcode hashing, session cookies, brute-force limiting |
-| `src/room.js` | the shared playback clock — where the movie *should* be |
-| `src/ws.js` | a small RFC 6455 WebSocket server (keeps dependencies at zero) |
-| `src/media.js` | folder scanning, ffprobe, HDR and bitrate detection |
-| `src/transcode.js` | encoder selection, HDR tone mapping, ffmpeg arguments |
-| `src/hls.js` | HLS segmenting, for Safari and anything else fussy |
-| `src/subtitles.js` | SRT/ASS → WebVTT |
-| `public/app.js` | the player, drift correction, chat |
+| `public/app.js` | the page: joining, sharing, watching, chat |
 | `public/screen.js` | WebRTC screen sharing, audio negotiation, reconnection |
-| `public/probe.js` | the two-sided connection test, and what it means |
+| `public/probe.js` | the two-sided connection test |
 | `public/selftest.js` | the one-sided one: what this network alone can answer |
 | `public/stats.js` | live bitrate, resolution and loss from a peer connection |
-| `public/wakelock.js` | keeping the screen awake while something is playing |
+| `public/wakelock.js` | keeping the screen awake while a screen is showing |

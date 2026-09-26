@@ -4,11 +4,9 @@
 // tunnel pointing at the wrong place, a relay with a stale password, a port
 // something else already took. The checks are deliberately dull and every
 // dependency is injectable, so the whole thing runs offline under test.
-import fs from 'node:fs';
 import net from 'node:net';
 
 import { inspectHostname, readIngressHostnames } from './cloudflare.js';
-import { detectFfmpeg } from './media.js';
 import { checkRelay, describeRelay, parseTurnUrl } from './turn.js';
 import { hasCloudflared } from './tunnel.js';
 
@@ -24,24 +22,6 @@ export function probePort(port, host = '0.0.0.0') {
     server.once('listening', () => server.close(() => resolve({ free: true, code: null })));
     server.listen(port, host);
   });
-}
-
-async function checkFolders(roots, { statDir }) {
-  // The normal case now: screen sharing needs no folder.
-  if (!roots.length) return [ok('Folders', 'None — screen sharing only.')];
-
-  const missing = [];
-  for (const dir of roots) {
-    try {
-      if (!statDir(dir).isDirectory()) missing.push(dir);
-    } catch {
-      missing.push(dir);
-    }
-  }
-  if (missing.length) {
-    return [fail('Folders', `Cannot read ${missing.join(', ')}`, 'Check the drive is plugged in and the path is right.')];
-  }
-  return [ok('Folders', `${roots.length} folder${roots.length === 1 ? '' : 's'} readable.`)];
 }
 
 async function checkPort(port, { probe }) {
@@ -123,16 +103,8 @@ async function checkRelays({ turnUrls, turnUser, turnPass }, { relay }) {
   return checks;
 }
 
-async function checkFfmpeg({ ffmpeg }) {
-  const found = await ffmpeg();
-  return found?.ffmpeg
-    ? [ok('ffmpeg', 'Present, so odd formats can be repackaged if a file ever needs it.')]
-    : [warn('ffmpeg', 'Not installed. Screen sharing does not need it; playing an unusual file might.')];
-}
-
 export async function preflight(options = {}, deps = {}) {
   const {
-    roots = [],
     port = 8420,
     hostname = null,
     tunnelName = null,
@@ -142,22 +114,18 @@ export async function preflight(options = {}, deps = {}) {
   } = options;
 
   const wired = {
-    statDir: fs.statSync,
     probe: probePort,
     cloudflared: hasCloudflared,
     inspect: inspectHostname,
     ingressHostnames: readIngressHostnames,
     relay: checkRelay,
-    ffmpeg: detectFfmpeg,
     ...deps,
   };
 
   const checks = [
-    ...(await checkFolders(roots, wired)),
     ...(await checkPort(port, wired)),
     ...(await checkTunnel({ hostname, tunnelName }, wired)),
     ...(await checkRelays({ turnUrls, turnUser, turnPass }, wired)),
-    ...(await checkFfmpeg(wired)),
   ];
 
   return {

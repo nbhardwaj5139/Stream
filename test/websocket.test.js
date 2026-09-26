@@ -1,8 +1,5 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 
@@ -14,20 +11,11 @@ const GUEST_PASSCODE = 'GUESTWS';
 let server;
 let wsBase;
 let httpBase;
-let mediaRoot;
 let hostCookie;
 let guestCookie;
 
 before(async () => {
-  mediaRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'stream-ws-'));
-  await fs.writeFile(path.join(mediaRoot, 'Film.mp4'), Buffer.alloc(2048));
-  server = await createServer({
-    roots: [mediaRoot],
-    hostPasscode: HOST_PASSCODE,
-    guestPasscode: GUEST_PASSCODE,
-    // The hold is opt-in now; this suite exercises it.
-    autoPauseOnBuffer: true,
-  });
+  server = await createServer({ hostPasscode: HOST_PASSCODE, guestPasscode: GUEST_PASSCODE });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   httpBase = `http://127.0.0.1:${port}`;
@@ -39,11 +27,10 @@ before(async () => {
 
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(mediaRoot, { recursive: true, force: true });
 });
 
-async function joinFor(passcode) {
-  const response = await fetch(`${httpBase}/api/join`, {
+async function joinFor(passcode, base = httpBase) {
+  const response = await fetch(`${base}/api/join`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ passcode }),
@@ -53,8 +40,8 @@ async function joinFor(passcode) {
 }
 
 // A tiny client wrapper: collects messages and lets a test await one by type.
-function connect(cookie) {
-  const socket = new WebSocket(wsBase, { headers: { cookie } });
+function connect(cookie, url = wsBase) {
+  const socket = new WebSocket(url, { headers: { cookie } });
   const received = [];
   const waiters = [];
 
@@ -97,22 +84,34 @@ function connect(cookie) {
   };
 }
 
-test('a session cookie gets a welcome with the room state and library', async () => {
+// A room of its own, for tests that change who is sharing: the shared server
+// is used by everything else, and a share left running would leak into them.
+async function freshRoom(options = {}) {
+  const own = await createServer({ hostPasscode: HOST_PASSCODE, guestPasscode: GUEST_PASSCODE, ...options });
+  await new Promise((resolve) => own.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${own.address().port}`;
+  const ws = `${base.replace('http', 'ws')}/ws`;
+  return {
+    server: own,
+    join: async (passcode) => {
+      const client = connect(await joinFor(passcode, base), ws);
+      await client.opened();
+      return client;
+    },
+    close: () => new Promise((resolve) => own.close(resolve)),
+  };
+}
+
+test('a session cookie gets a welcome saying who you are and what is showing', async () => {
   const client = connect(hostCookie);
   await client.opened();
   const welcome = await client.next('welcome');
 
   assert.equal(welcome.you.role, 'host');
   assert.ok(welcome.you.id);
-  assert.equal(welcome.state.paused, true);
-  assert.equal(welcome.library.length, 1);
-  client.close();
-});
-
-test('the host is recognised as the host', async () => {
-  const client = connect(hostCookie);
-  await client.opened();
-  assert.equal((await client.next('welcome')).you.role, 'host');
+  assert.equal(welcome.state.sharerId, null, 'nothing is being shared yet');
+  assert.deepEqual(welcome.capabilities, { iceServers: [], shareHeight: 1080 });
+  assert.equal(welcome.library, undefined, 'there is no file list any more');
   client.close();
 });
 
@@ -127,57 +126,115 @@ test('a connection with no session is rejected at the handshake', async () => {
   );
 });
 
-test('ping/pong carries a server timestamp for clock sync', async () => {
-  const client = connect(guestCookie);
-  await client.opened();
-  await client.next('welcome');
+test('a configured relay reaches the browsers the way they actually read it', async () => {
+  // Screen sharing is peer to peer, so a relay has to arrive in the page or it
+  // may as well not be configured. The page reads it from the welcome.
+  const relay = { urls: ['turn:relay.example.com:3478'], username: 'someone', credential: 'secret' };
+  const room = await freshRoom({ iceServers: [relay], shareHeight: 720 });
+  const guest = await room.join(GUEST_PASSCODE);
+  const welcome = await guest.next('welcome');
 
-  const t0 = Date.now();
-  client.send({ type: 'ping', t0 });
-  const pong = await client.next('pong');
-  assert.equal(pong.t0, t0);
-  assert.ok(Math.abs(pong.serverTime - t0) < 5000);
-  client.close();
-});
+  assert.deepEqual(welcome.capabilities.iceServers, [relay]);
+  assert.equal(welcome.capabilities.iceServers[0].credential, 'secret', 'credentials travel with it');
+  assert.equal(welcome.capabilities.shareHeight, 720);
 
-test('one side pressing play moves the other side', async () => {
-  const host = connect(hostCookie);
-  const guest = connect(guestCookie);
-  await Promise.all([host.opened(), guest.opened()]);
-  await Promise.all([host.next('welcome'), guest.next('welcome')]);
-
-  host.send({ type: 'control', action: 'play', position: 42 });
-  const state = await guest.next((m) => m.type === 'state' && !m.paused);
-  assert.ok(state.position >= 42 && state.position < 44);
-
-  guest.send({ type: 'control', action: 'pause', position: 50 });
-  const paused = await host.next((m) => m.type === 'state' && m.paused && m.position >= 50);
-  assert.equal(paused.paused, true);
-
-  host.close();
   guest.close();
+  await room.close();
 });
 
-test('selecting a file broadcasts the file description to everyone', async () => {
-  const host = connect(hostCookie);
-  const guest = connect(guestCookie);
-  await Promise.all([host.opened(), guest.opened()]);
-  const welcome = await host.next('welcome');
+test('the host sharing tells everyone whose screen to show, and stopping tells them too', async () => {
+  const room = await freshRoom();
+  const host = await room.join(HOST_PASSCODE);
+  const guest = await room.join(GUEST_PASSCODE);
+  const hostWelcome = await host.next('welcome');
   await guest.next('welcome');
 
-  const id = welcome.library[0].id;
-  host.send({ type: 'control', action: 'select', mediaId: id });
+  host.send({ type: 'share', on: true });
+  const started = await guest.next((m) => m.type === 'state' && m.sharerId);
+  assert.equal(started.sharerId, hostWelcome.you.id);
 
-  const media = await guest.next('media');
-  assert.equal(media.media.id, id);
-  assert.equal(media.media.name, 'Film');
-
-  const state = await guest.next((m) => m.type === 'state' && m.mediaId === id);
-  assert.equal(state.paused, true);
-  assert.equal(state.position, 0);
+  host.send({ type: 'share', on: false });
+  const stopped = await guest.next((m) => m.type === 'state' && m.sharerId === null);
+  assert.ok(stopped.version > started.version);
 
   host.close();
   guest.close();
+  await room.close();
+});
+
+test('somebody joining mid-share is told straight away whose screen it is', async () => {
+  const room = await freshRoom();
+  const host = await room.join(HOST_PASSCODE);
+  const hostWelcome = await host.next('welcome');
+  host.send({ type: 'share', on: true });
+  await host.next((m) => m.type === 'state' && m.sharerId);
+
+  const late = await room.join(GUEST_PASSCODE);
+  const welcome = await late.next('welcome');
+  assert.equal(welcome.state.sharerId, hostWelcome.you.id);
+
+  host.close();
+  late.close();
+  await room.close();
+});
+
+test('the share ends for everyone when the sharer leaves', async () => {
+  // Otherwise the room goes on claiming a screen nobody is sharing, and the
+  // guest waits for a picture that is never coming.
+  const room = await freshRoom();
+  const host = await room.join(HOST_PASSCODE);
+  const guest = await room.join(GUEST_PASSCODE);
+  await Promise.all([host.next('welcome'), guest.next('welcome')]);
+
+  host.send({ type: 'share', on: true });
+  await guest.next((m) => m.type === 'state' && m.sharerId);
+
+  host.close();
+  await guest.next((m) => m.type === 'state' && m.sharerId === null);
+  assert.equal(room.server.room.sharerId, null);
+
+  guest.close();
+  await room.close();
+});
+
+test('a host back from a dropped connection can take the share straight back', async () => {
+  // The browser keeps its capture through a blip in the site's connection and
+  // reclaims the share on reconnecting. The room must accept that from the
+  // host's new connection, and tell the guest who is sharing now.
+  const room = await freshRoom();
+  const guest = await room.join(GUEST_PASSCODE);
+  await guest.next('welcome');
+
+  const first = await room.join(HOST_PASSCODE);
+  await first.next('welcome');
+  first.send({ type: 'share', on: true });
+  await guest.next((m) => m.type === 'state' && m.sharerId);
+  first.close();
+  await guest.next((m) => m.type === 'state' && m.sharerId === null);
+
+  const again = await room.join(HOST_PASSCODE);
+  const welcome = await again.next('welcome');
+  again.send({ type: 'share', on: true });
+  const reclaimed = await guest.next((m) => m.type === 'state' && m.sharerId === welcome.you.id);
+  assert.equal(reclaimed.sharerId, welcome.you.id);
+
+  again.close();
+  guest.close();
+  await room.close();
+});
+
+test('a guest cannot share, and is told why', async () => {
+  const room = await freshRoom();
+  const guest = await room.join(GUEST_PASSCODE);
+  await guest.next('welcome');
+
+  guest.send({ type: 'share', on: true });
+  const error = await guest.next('error');
+  assert.match(error.error, /only the host/i);
+  assert.equal(room.server.room.sharerId, null);
+
+  guest.close();
+  await room.close();
 });
 
 test('chat reaches the other side with the sender name attached', async () => {
@@ -186,12 +243,11 @@ test('chat reaches the other side with the sender name attached', async () => {
   await Promise.all([host.opened(), guest.opened()]);
   await Promise.all([host.next('welcome'), guest.next('welcome')]);
 
-  host.send({ type: 'hello', name: 'Nikhil' });
+  host.send({ type: 'hello', name: 'Sam' });
   host.send({ type: 'chat', text: 'this bit is my favourite' });
 
-  const chat = await guest.next('chat');
-  assert.equal(chat.entry.text, 'this bit is my favourite');
-  assert.equal(chat.entry.name, 'Nikhil');
+  const chat = await guest.next((m) => m.type === 'chat' && m.entry.text === 'this bit is my favourite');
+  assert.equal(chat.entry.name, 'Sam');
 
   host.close();
   guest.close();
@@ -222,65 +278,6 @@ test('presence lists everyone and updates when someone leaves', async () => {
   host.close();
 });
 
-test('a buffering report pauses the room for both sides', async () => {
-  const host = connect(hostCookie);
-  const guest = connect(guestCookie);
-  await Promise.all([host.opened(), guest.opened()]);
-  const welcome = await host.next('welcome');
-  await guest.next('welcome');
-
-  host.send({ type: 'control', action: 'select', mediaId: welcome.library[0].id });
-  await guest.next('media');
-  host.send({ type: 'control', action: 'play', position: 0 });
-  await guest.next((m) => m.type === 'state' && !m.paused);
-
-  guest.send({ type: 'report', position: 1, paused: false, buffering: true });
-  const held = await host.next((m) => m.type === 'state' && m.paused && m.waitingFor);
-  assert.ok(held.waitingFor);
-
-  guest.send({ type: 'report', position: 1, paused: false, buffering: false });
-  const resumed = await host.next((m) => m.type === 'state' && !m.paused);
-  assert.equal(resumed.waitingFor, null);
-
-  host.close();
-  guest.close();
-});
-
-test('host-only rooms tell guests why their tap did nothing', async () => {
-  const strict = await createServer({
-    roots: [mediaRoot],
-    hostPasscode: HOST_PASSCODE,
-    guestPasscode: GUEST_PASSCODE,
-    controlMode: 'host',
-  });
-  await new Promise((resolve) => strict.listen(0, '127.0.0.1', resolve));
-  const url = `http://127.0.0.1:${strict.address().port}`;
-
-  const response = await fetch(`${url}/api/join`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ passcode: GUEST_PASSCODE }),
-  });
-  const cookie = response.headers.get('set-cookie').split(';')[0];
-
-  const socket = new WebSocket(`${url.replace('http', 'ws')}/ws`, { headers: { cookie } });
-  const message = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timed out')), 4000);
-    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'control', action: 'play' })));
-    socket.addEventListener('message', (event) => {
-      const parsed = JSON.parse(event.data);
-      if (parsed.type === 'error') {
-        clearTimeout(timer);
-        resolve(parsed);
-      }
-    });
-  });
-
-  assert.match(message.error, /only the host/i);
-  socket.close();
-  await new Promise((resolve) => strict.close(resolve));
-});
-
 test('the frame parser handles payloads past the 16- and 64-bit length markers', async () => {
   const client = connect(guestCookie);
   await client.opened();
@@ -305,8 +302,8 @@ test('malformed JSON does not take the connection down', async () => {
   await client.next('welcome');
 
   client.socket.send('{not json at all');
-  client.send({ type: 'ping', t0: 1 });
-  assert.equal((await client.next('pong')).t0, 1);
+  client.send({ type: 'chat', text: 'still here' });
+  assert.equal((await client.next((m) => m.type === 'chat' && m.entry.text === 'still here')).entry.text, 'still here');
   client.close();
 });
 
@@ -332,105 +329,9 @@ test('a viewer whose connection is reset does not take the server down', async (
   await new Promise((resolve) => socket.once('data', resolve));
   socket.resetAndDestroy();
 
-  survivor.send({ type: 'ping', t0: 99 });
-  assert.equal((await survivor.next((m) => m.type === 'pong' && m.t0 === 99)).t0, 99);
+  survivor.send({ type: 'chat', text: 'still standing' });
+  await survivor.next((m) => m.type === 'chat' && m.entry.text === 'still standing');
   survivor.close();
-});
-
-test('a guest gets no file list in the welcome message', async () => {
-  const guest = connect(guestCookie);
-  await guest.opened();
-  const welcome = await guest.next('welcome');
-  assert.deepEqual(welcome.library, [], 'the disk contents must not be broadcast');
-  assert.equal(welcome.state.libraryMode, 'host');
-  guest.close();
-
-  const host = connect(hostCookie);
-  await host.opened();
-  assert.ok((await host.next('welcome')).library.length > 0, 'the host still sees it');
-  host.close();
-});
-
-test('a guest cannot choose what plays', async () => {
-  const host = connect(hostCookie);
-  const guest = connect(guestCookie);
-  await Promise.all([host.opened(), guest.opened()]);
-  const welcome = await host.next('welcome');
-  await guest.next('welcome');
-
-  guest.send({ type: 'control', action: 'select', mediaId: welcome.library[0].id });
-  const error = await guest.next('error');
-  assert.match(error.error, /only the host can choose/i);
-
-  // But she can still start and stop it, because that is a different
-  // privilege. Pause first: earlier tests may have left the room playing,
-  // and an unchanged room broadcasts nothing to wait on.
-  guest.send({ type: 'control', action: 'pause', position: 0 });
-  await guest.next((m) => m.type === 'state' && m.paused);
-  guest.send({ type: 'control', action: 'play', position: 5 });
-  await guest.next((m) => m.type === 'state' && !m.paused);
-
-  host.close();
-  guest.close();
-});
-
-test('stopping puts the room back to nothing playing', async () => {
-  const host = connect(hostCookie);
-  const guest = connect(guestCookie);
-  await Promise.all([host.opened(), guest.opened()]);
-  const welcome = await host.next('welcome');
-  await guest.next('welcome');
-
-  host.send({ type: 'control', action: 'select', mediaId: welcome.library[0].id });
-  await guest.next((m) => m.type === 'state' && m.mediaId === welcome.library[0].id);
-
-  host.send({ type: 'control', action: 'select', mediaId: null });
-  const stopped = await guest.next((m) => m.type === 'state' && m.mediaId === null);
-  assert.equal(stopped.paused, true);
-  assert.equal(stopped.position, 0);
-
-  host.close();
-  guest.close();
-});
-
-test('the room resets to nothing playing once everyone has left', async () => {
-  const quick = await createServer({
-    roots: [mediaRoot],
-    hostPasscode: HOST_PASSCODE,
-    guestPasscode: GUEST_PASSCODE,
-    resetWhenEmptyMs: 150,
-  });
-  await new Promise((resolve) => quick.listen(0, '127.0.0.1', resolve));
-  const url = `http://127.0.0.1:${quick.address().port}`;
-
-  const response = await fetch(`${url}/api/join`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ passcode: HOST_PASSCODE }),
-  });
-  const cookie = response.headers.get('set-cookie').split(';')[0];
-
-  const socket = new WebSocket(`${url.replace('http', 'ws')}/ws`, { headers: { cookie } });
-  const welcome = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timed out')), 4000);
-    socket.addEventListener('message', (event) => {
-      const parsed = JSON.parse(event.data);
-      if (parsed.type === 'welcome') {
-        clearTimeout(timer);
-        resolve(parsed);
-      }
-    });
-  });
-
-  socket.send(JSON.stringify({ type: 'control', action: 'select', mediaId: welcome.library[0].id }));
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(quick.room.mediaId, welcome.library[0].id);
-
-  socket.close();
-  await new Promise((resolve) => setTimeout(resolve, 600));
-  assert.equal(quick.room.mediaId, null, 'nobody left, so the room went home');
-
-  await new Promise((resolve) => quick.close(resolve));
 });
 
 test('a browser closing its tab actually removes the viewer', async () => {
@@ -485,13 +386,3 @@ test('WebRTC signalling reaches the named peer and nobody else', async () => {
   guest.close();
 });
 
-test('a guest cannot put the room on the host screen', async () => {
-  const guest = connect(guestCookie);
-  await guest.opened();
-  await guest.next('welcome');
-
-  guest.send({ type: 'control', action: 'source', source: 'screen' });
-  const error = await guest.next('error');
-  assert.match(error.error, /only the host/i);
-  guest.close();
-});

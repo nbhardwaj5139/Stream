@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { upgradeAudio } from '../public/screen.js';
-import { Room } from '../src/room.js';
 
 const SDP_WITH_FMTP = [
   'v=0',
@@ -43,91 +42,6 @@ test('the audio settings are added when there were none', () => {
 test('an SDP with no Opus is left exactly as it was', () => {
   const sdp = 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 VP8/90000\r\n';
   assert.equal(upgradeAudio(sdp), sdp);
-});
-
-test('switching to the screen is the host’s to make', () => {
-  const room = new Room();
-  const host = room.addViewer({ role: 'host' });
-  const guest = room.addViewer({ role: 'guest' });
-
-  assert.equal(room.applyControl(guest, { action: 'source', source: 'screen' }).reason, 'not-allowed');
-  assert.equal(room.source, 'file');
-
-  assert.equal(room.applyControl(host, { action: 'source', source: 'screen' }).changed, true);
-  assert.equal(room.source, 'screen');
-  assert.equal(room.snapshot().source, 'screen');
-
-  // Asking for what is already true is not a change to broadcast.
-  assert.equal(room.applyControl(host, { action: 'source', source: 'screen' }).changed, false);
-  assert.equal(room.applyControl(host, { action: 'source', source: 'sideways' }).reason, 'bad-source');
-});
-
-test('picking a film comes back off the screen by itself', () => {
-  const room = new Room();
-  const host = room.addViewer({ role: 'host' });
-
-  room.applyControl(host, { action: 'source', source: 'screen' });
-  room.applyControl(host, { action: 'select', mediaId: 'abc' });
-
-  assert.equal(room.source, 'file', 'choosing something to watch means watching it');
-  assert.equal(room.mediaId, 'abc');
-});
-
-test('a live screen is never held for somebody’s buffer', () => {
-  const room = new Room({ autoPauseOnBuffer: true });
-  const host = room.addViewer({ role: 'host' });
-  const guest = room.addViewer({ role: 'guest' });
-
-  room.applyControl(host, { action: 'play', position: 0 });
-  room.applyControl(host, { action: 'source', source: 'screen' });
-
-  // Nothing to wait for: there is no buffer to catch up to on a live stream.
-  assert.equal(room.report(guest, { buffering: true }).changed, false);
-  assert.equal(room.waitingFor, null);
-});
-
-test('an emptied room forgets the screen too', () => {
-  const room = new Room();
-  const host = room.addViewer({ role: 'host' });
-  room.applyControl(host, { action: 'source', source: 'screen' });
-  room.clearPlayback();
-  assert.equal(room.source, 'file');
-});
-
-test('the room leaves screen mode when the person sharing goes', () => {
-  // Otherwise the next person to join is told they are watching a screen that
-  // nobody is sharing — including the host, on their own machine.
-  const room = new Room();
-  const host = room.addViewer({ role: 'host' });
-  const guest = room.addViewer({ role: 'guest' });
-
-  room.applyControl(host, { action: 'source', source: 'screen' });
-  assert.equal(room.source, 'screen');
-  assert.equal(room.sharerId, host.id);
-
-  // Somebody else leaving changes nothing.
-  room.removeViewer(guest.id);
-  assert.equal(room.source, 'screen');
-
-  room.removeViewer(host.id);
-  assert.equal(room.source, 'file', 'their screen left with them');
-  assert.equal(room.sharerId, null);
-  assert.equal(room.snapshot().source, 'file');
-});
-
-test('stopping a share by hand clears who was sharing', () => {
-  const room = new Room();
-  const host = room.addViewer({ role: 'host' });
-
-  room.applyControl(host, { action: 'source', source: 'screen' });
-  room.applyControl(host, { action: 'source', source: 'file' });
-  assert.equal(room.sharerId, null);
-
-  // And picking a film does too, since that ends the share.
-  room.applyControl(host, { action: 'source', source: 'screen' });
-  room.applyControl(host, { action: 'select', mediaId: 'abc' });
-  assert.equal(room.source, 'file');
-  assert.equal(room.sharerId, null);
 });
 
 test('the share profile matches resolution to a sendable bitrate', async () => {

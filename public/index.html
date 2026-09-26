@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="/static/icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Movie Night">
+<meta name="apple-mobile-web-app-title" content="Stream">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="/static/styles.css?v={{ASSETS}}">
 </head>
@@ -66,9 +66,8 @@
               <path d="M10 9.5v5l4-2.5z" fill="currentColor" stroke="none"/>
             </svg>
           </div>
-          <h1 id="placeholder-title">Nothing playing yet</h1>
-          <p id="placeholder-text">Pick something to watch and it will start for both of you.</p>
-          <button id="placeholder-browse" class="button primary big">Choose a film</button>
+          <h1 id="placeholder-title">Waiting to start</h1>
+          <p id="placeholder-text">The screen will appear here by itself as soon as it is shared.</p>
           <p id="placeholder-hint" class="hint-line"></p>
         </div>
       </div>
@@ -78,27 +77,16 @@
         <span id="overlay-text">Waiting…</span>
       </div>
 
-      <div id="nudge" class="nudge" hidden></div>
     </div>
 
     <div class="bar">
       <div class="bar-left">
         <span id="role-badge" class="role" hidden></span>
-        <span id="now-playing" class="now-playing">Nothing playing</span>
+        <span id="now-showing" class="now-playing">Stream</span>
         <span id="sync-badge" class="badge">Connecting…</span>
       </div>
 
       <div class="bar-right">
-        <label id="quality-wrap" class="quality" hidden>
-          <span class="visually-hidden">Picture quality</span>
-          <select id="quality" class="select" title="Lower this if the picture keeps stopping">
-            <option value="original">Best quality</option>
-            <option value="high">1080p</option>
-            <option value="medium">720p</option>
-            <option value="low">480p — slowest connection</option>
-          </select>
-        </label>
-
         <button id="btn-sound" class="button sound" title="Sound on or off" hidden>
           <svg class="icon-sound-on" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M11 5 6 9H2v6h4l5 4z"/>
@@ -111,29 +99,14 @@
           <span id="sound-label">Sound on</span>
         </button>
 
-        <button id="btn-resync" class="button" title="Jump to where everyone else is">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg>
-          <span>Catch up</span>
-        </button>
-
         <button id="btn-fullscreen" class="button" title="Fill the screen (F)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
           <span>Fullscreen</span>
         </button>
 
-        <button id="btn-stop" class="button" title="Stop and go back to the film list" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-          <span>Stop</span>
-        </button>
-
-        <button id="btn-share" class="button primary" title="Share this screen — works with anything, including 4K" hidden>
+        <button id="btn-share" class="button primary" title="Share this screen — pick Entire Screen and tick Share system audio" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v11H3zM8 20h8M12 16v4"/></svg>
           <span>Share screen</span>
-        </button>
-
-        <button id="btn-library" class="button" title="Play a file from this machine instead">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
-          <span>Choose a film</span>
         </button>
 
         <button id="btn-reload" class="button" title="Reload if something gets stuck">
@@ -178,21 +151,6 @@
       <button class="button primary" type="submit">Send</button>
     </form>
   </aside>
-
-  <div class="sheet" id="library-sheet" hidden>
-    <div class="sheet-inner">
-      <header class="sheet-head">
-        <h2>Library</h2>
-        <div class="sheet-actions">
-          <button id="btn-rescan" class="button ghost" hidden>Rescan</button>
-          <button id="btn-library-close" class="icon-button" aria-label="Close library">×</button>
-        </div>
-      </header>
-      <input id="library-filter" class="filter" type="search" placeholder="Filter…" autocomplete="off">
-      <ul class="library" id="library-list"></ul>
-      <p class="sheet-note" id="library-note"></p>
-    </div>
-  </div>
 
   <div class="toast" id="toast" hidden></div>
 </div>

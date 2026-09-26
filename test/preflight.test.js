@@ -6,13 +6,11 @@ import { formatPreflight, preflight, probePort } from '../src/preflight.js';
 // Every dependency stubbed, so the checks run without touching the network.
 function stubs(overrides = {}) {
   return {
-    statDir: () => ({ isDirectory: () => true }),
     probe: async () => ({ free: true, code: null }),
     cloudflared: async () => true,
     inspect: async (hostname) => ({ hostname, verdict: 'ok', detail: 'DNS points at Cloudflare, which is correct.' }),
     ingressHostnames: () => ['movies.example.com'],
     relay: async ({ url }) => ({ ok: true, stage: 'allocate', url, scheme: 'turn', host: 'r', port: 3478, roundTripMs: 20, relayed: { address: '203.0.113.9' } }),
-    ffmpeg: async () => ({ ffmpeg: '/usr/bin/ffmpeg' }),
     ...overrides,
   };
 }
@@ -21,7 +19,7 @@ const find = (report, name) => report.checks.find((check) => check.name === name
 
 test('a healthy set-up passes with nothing to say', async () => {
   const report = await preflight(
-    { roots: ['/films'], port: 8420, hostname: 'movies.example.com', tunnelName: 'movies', turnUrls: ['turn:r:3478'], turnUser: 'u', turnPass: 'p' },
+    { port: 8420, hostname: 'movies.example.com', tunnelName: 'movies', turnUrls: ['turn:r:3478'], turnUser: 'u', turnPass: 'p' },
     stubs()
   );
 
@@ -29,28 +27,6 @@ test('a healthy set-up passes with nothing to say', async () => {
   assert.equal(report.failures, 0);
   assert.equal(report.warnings, 0);
   assert.match(formatPreflight(report), /All clear/);
-});
-
-test('a folder that is not there is fatal, and says which', async () => {
-  const report = await preflight(
-    { roots: ['/films', '/gone'] },
-    stubs({
-      statDir: (dir) => {
-        if (dir === '/gone') throw new Error('ENOENT');
-        return { isDirectory: () => true };
-      },
-    })
-  );
-
-  assert.equal(report.ok, false);
-  assert.match(find(report, 'Folders').detail, /\/gone/);
-  assert.doesNotMatch(find(report, 'Folders').detail, /\/films/);
-});
-
-test('having no folders is the normal case, because screen sharing needs none', async () => {
-  const report = await preflight({ roots: [] }, stubs());
-  assert.equal(find(report, 'Folders').status, 'ok', 'not even a warning');
-  assert.equal(report.ok, true);
 });
 
 test('a taken port is fatal and suggests the next one', async () => {
@@ -134,12 +110,6 @@ test('no relay at all is the warning that matters most', async () => {
   assert.match(check.fix, /Mobile data/);
   // Printed with its remedy indented under it, so it cannot be missed.
   assert.match(formatPreflight(report), /Relay: No TURN relay configured[\s\S]*\n {9}Mobile data/);
-});
-
-test('a missing ffmpeg does not stop an evening of screen sharing', async () => {
-  const report = await preflight({}, stubs({ ffmpeg: async () => ({ ffmpeg: null }) }));
-  assert.equal(find(report, 'ffmpeg').status, 'warn');
-  assert.equal(report.ok, true);
 });
 
 test('the port probe reports a real port as taken', async (t) => {

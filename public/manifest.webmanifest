@@ -1,7 +1,7 @@
 {
-  "name": "Stream — Movie Night",
-  "short_name": "Movie Night",
-  "description": "Watch the films on your laptop together, in sync.",
+  "name": "Stream",
+  "short_name": "Stream",
+  "description": "Watch a shared screen, sound and all, from anywhere.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -9,8 +9,21 @@
   "background_color": "#08090d",
   "theme_color": "#08090d",
   "icons": [
-    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "/static/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }
