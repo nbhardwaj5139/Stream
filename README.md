@@ -99,8 +99,24 @@ getting, with a small *Live* strip in the corner saying who is watching. The
 preview is muted, so you do not hear the film twice. It shows itself inside
 itself, like a hall of mirrors, while this window is on the screen you are
 sharing; that is normal, and not what they see — it goes as soon as the film
-is full screen in your player. *Note & look* on the strip opens the box above
+is full screen in your player. *Settings* on the strip opens the box above
 as a panel beside the preview, if you want to change something mid-film.
+
+### Showing someone out
+
+At the bottom of the same box are their passcode and everyone who is here,
+each with *Remove*. Removing someone sends them back to the passcode page, and
+the sign-in they used stops working — reconnecting will not get them back in,
+even after the room restarts. You are then asked whether to change the
+passcode too, since otherwise they could simply type it in again. Everyone
+still in the room stays either way; only people signing in from then on need
+the new one, which shows on your page (and in the Stream window). *Change*
+next to the passcode does the same at any time.
+
+Restarting the room within four hours keeps the same passcodes and keeps
+everyone signed in, so a restart mid-film does not throw anyone out. After
+that, or with `--new-passcodes`, it starts fresh and everyone has to sign in
+again.
 
 Chrome puts a "…is sharing your screen" bar at the bottom of the screen. Click
 *Hide* on it, or it sits over the bottom of their picture all evening.

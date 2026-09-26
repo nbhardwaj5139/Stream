@@ -262,10 +262,15 @@ if (resumed) {
   );
 }
 
+// Sign-ins removed from the room. They belong to this session secret, so
+// they go when it does.
+const revokedSessions = saved.sessionSecret ? (saved.revokedSessions ?? []) : [];
+
 saveConfig({
   hostPasscode,
   guestPasscode,
   sessionSecret,
+  revokedSessions,
   lastRun: {
     port: options.port,
     hostname: configuredHostname,
@@ -296,6 +301,17 @@ const server = await createServer({
   onSettingsChange: ({ roomName, surprise, theme }) => {
     const current = loadConfig();
     saveConfig({ ...current, lastRun: { ...(current.lastRun ?? {}), roomName, surprise, theme } });
+  },
+  revokedSessions,
+  onRevokedChange: (list) => {
+    saveConfig({ ...loadConfig(), revokedSessions: list });
+    console.log('Someone was removed from the room.');
+  },
+  // Changed from the host's page after removing someone. Saved, so a restart
+  // keeps it, and said here, in case this window is where they look.
+  onPasscodeChange: ({ guestPasscode: next }) => {
+    saveConfig({ ...loadConfig(), guestPasscode: next });
+    console.log(`\n  Their passcode is now:  ${next}   (changed from your page)\n`);
   },
   shareHeight: options.shareHeight,
   iceServers: options.turnUrls.length

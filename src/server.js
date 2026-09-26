@@ -13,6 +13,7 @@ import { attachWebSocketServer } from './ws.js';
 import {
   AttemptLimiter,
   clientAddress,
+  generatePasscode,
   generateToken,
   hashPasscode,
   parseCookies,
@@ -149,6 +150,12 @@ export async function createServer(options = {}) {
     theme: initialTheme = 'classic',
     // Told when the host changes either, so they can be kept for next time.
     onSettingsChange = () => {},
+    // Sign-ins the host has thrown out, kept across restarts so a removed
+    // browser cannot simply reconnect: [{ id, expiresAt }].
+    revokedSessions = [],
+    onRevokedChange = () => {},
+    // Told when the host changes the guest passcode from the page.
+    onPasscodeChange = () => {},
     // Extra ICE servers for screen sharing. Public STUN is enough for most
     // connections; a TURN relay is what gets through the ones it is not.
     iceServers = [],
@@ -169,6 +176,17 @@ export async function createServer(options = {}) {
     host: hashPasscode(hostPasscode),
     guest: hashPasscode(guestPasscode),
   };
+  // Shown on the host's own page, so they can send it without the console.
+  let currentGuestPasscode = guestPasscode;
+
+  // A sign-in is known by a digest of its cookie: enough to recognise it, and
+  // nothing that could be used to sign in if the file were read.
+  const sessionId = (token) => crypto.createHash('sha256').update(token).digest('hex').slice(0, 32);
+  const revoked = new Map(
+    revokedSessions
+      .filter((entry) => entry && typeof entry.id === 'string' && entry.expiresAt > Date.now())
+      .map((entry) => [entry.id, entry.expiresAt])
+  );
 
   const assets = await assetVersion();
   const room = new Room();
@@ -199,7 +217,35 @@ export async function createServer(options = {}) {
 
   function identify(req) {
     const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
-    return verifySession(sessionSecret, token);
+    const session = verifySession(sessionSecret, token);
+    if (!session) return null;
+    const id = sessionId(token);
+    if (revoked.has(id)) return null;
+    return { ...session, id };
+  }
+
+  // Throw a guest out: every connection on their sign-in closes, and the
+  // sign-in stops working, here and after a restart.
+  function removeGuest(viewerId) {
+    const target = connections.get(viewerId);
+    const viewer = room.viewers.get(viewerId);
+    if (!target || viewer?.role !== 'guest') return null;
+    const { sessionId: id, expiresAt } = target.data;
+    const now = Date.now();
+    for (const [key, until] of revoked) if (until <= now) revoked.delete(key);
+    revoked.set(id, expiresAt ?? now + REMEMBERED_TTL_MS);
+    onRevokedChange([...revoked].map(([key, until]) => ({ id: key, expiresAt: until })));
+    for (const [otherId, connection] of connections) {
+      if (connection.data.sessionId !== id) continue;
+      connection.send({ type: 'removed' });
+      connection.close(4001, 'removed');
+      // Gone from the room now, not when the close handshake finishes.
+      connections.delete(otherId);
+      const { viewer: removed, endedShare } = room.removeViewer(otherId);
+      if (removed && endedShare) broadcast({ ...room.snapshot(), reason: 'left', by: removed.name });
+    }
+    broadcastPresence();
+    return viewer;
   }
 
   function sessionCookie(req, payload) {
@@ -371,7 +417,23 @@ export async function createServer(options = {}) {
         // cleared one leaves their screen, back to the ordinary waiting one.
         if (surpriseChanged) broadcastToGuests({ type: 'surprise', text: surprise });
       }
-      sendJson(res, 200, { roomName, surprise, theme });
+      sendJson(res, 200, { roomName, surprise, theme, guestPasscode: currentGuestPasscode });
+      return;
+    }
+
+    // A new guest passcode, so somebody who was removed cannot walk back in.
+    // Whoever is in the room stays; only new sign-ins need the new one.
+    if (pathname === '/api/passcode' && req.method === 'POST') {
+      if (session.role !== 'host') {
+        sendJson(res, 403, { error: 'Only the host can change the passcode.' });
+        return;
+      }
+      let next = generatePasscode();
+      while (next === hostPasscode || next === currentGuestPasscode) next = generatePasscode();
+      currentGuestPasscode = next;
+      passcodes.guest = hashPasscode(next);
+      onPasscodeChange({ guestPasscode: next });
+      sendJson(res, 200, { guestPasscode: next });
       return;
     }
 
@@ -391,7 +453,9 @@ export async function createServer(options = {}) {
     path: '/ws',
     authorize: (req) => {
       const session = identify(req);
-      return session ? { role: session.role, name: session.name } : false;
+      return session
+        ? { role: session.role, name: session.name, sessionId: session.id, expiresAt: session.expiresAt }
+        : false;
     },
   });
 
@@ -448,6 +512,16 @@ export async function createServer(options = {}) {
         case 'chat': {
           const entry = room.addChat(self, message.text);
           if (entry) broadcast({ type: 'chat', entry });
+          break;
+        }
+
+        case 'remove': {
+          if (self.role !== 'host') {
+            connection.send({ type: 'error', error: 'Only the host can remove people.' });
+            break;
+          }
+          const removed = removeGuest(message.id);
+          if (removed) connection.send({ type: 'removed-ok', name: removed.name });
           break;
         }
 

@@ -39,6 +39,9 @@ const dom = {
   chatInput: el('chat-input'),
   emojiRow: el('emoji-row'),
   shareStrip: el('share-strip'),
+  guestPasscode: el('guest-passcode'),
+  btnNewPasscode: el('btn-new-passcode'),
+  peopleList: el('people-list'),
   shareStripText: el('share-strip-text'),
   btnShareView: el('btn-share-view'),
   surpriseEmoji: el('surprise-emoji'),
@@ -92,6 +95,8 @@ const state = {
   // have since dropped off the site.
   lastHost: null,
   hostGone: false,
+  // Shown out by the host: back to the passcode page, and no reconnecting.
+  removed: false,
   // Host side, while sharing: the live preview, or the note-and-look card.
   shareView: 'preview',
 };
@@ -257,7 +262,9 @@ function connect() {
   });
 
   socket.addEventListener('close', async () => {
+    if (state.socket !== socket) return;
     state.connected = false;
+    if (state.removed) return;
     setOffline(true);
     updateSyncBadge();
     // A session that went away cannot be fixed by retrying; ask again.
@@ -376,6 +383,20 @@ function handleMessage(message) {
     case 'theme':
       // A preview the host has not saved yet stays on their own screen.
       if (!(state.role === 'host' && tonightDirty)) applyTheme(message.theme);
+      break;
+
+    case 'removed':
+      // The host showed us out. Not a dropped connection, so no reconnecting.
+      state.removed = true;
+      if (screenShare.sharing) screenShare.stop();
+      screenShare.closeAll();
+      dom.video.srcObject = null;
+      state.socket?.close();
+      showGate('The host has removed you from the room.');
+      break;
+
+    case 'removed-ok':
+      offerNewPasscode(message.name);
       break;
 
     case 'chat':
@@ -692,7 +713,7 @@ function renderSharingCard() {
   const watching = listNames(others(), ['is watching', 'are watching']) || 'Nobody has joined yet';
   dom.shareStrip.hidden = false;
   dom.shareStripText.textContent = `Live · ${watching}`;
-  dom.btnShareView.textContent = state.shareView === 'card' ? 'Close' : 'Note & look';
+  dom.btnShareView.textContent = state.shareView === 'card' ? 'Close' : 'Settings';
 
   // The preview is always up while there is one; the options, when asked
   // for, sit beside it in a panel rather than in front of it.
@@ -880,6 +901,7 @@ function renderPresence() {
     chip.textContent = viewer.id === state.me?.id ? `${viewer.name} (you)` : viewer.name;
     dom.presence.append(chip);
   }
+  renderPeople();
   const count = others().length;
   dom.panelLabel.textContent = count ? `Chat · ${count}` : 'Chat';
   if (screenShare.sharing) renderSharingCard();
@@ -1044,6 +1066,7 @@ async function loadTonight() {
     const response = await fetch('/api/settings', { credentials: 'same-origin' });
     if (!response.ok) return;
     const settings = await response.json();
+    if (settings.guestPasscode) dom.guestPasscode.textContent = settings.guestPasscode;
     if (tonightDirty) return;
     const radio = dom.tonight.querySelector(`input[name="theme"][value="${settings.theme}"]`);
     if (radio) radio.checked = true;
@@ -1056,6 +1079,69 @@ async function loadTonight() {
     /* the box simply starts empty */
   }
 }
+
+// Who is here, with a way to show a guest out. Only the host sees this.
+function renderPeople() {
+  if (state.role !== 'host') return;
+  const guests = state.viewers.filter((viewer) => viewer.role === 'guest');
+  dom.peopleList.replaceChildren();
+  if (!guests.length) {
+    const empty = document.createElement('li');
+    empty.className = 'people-empty';
+    empty.textContent = 'Nobody else is here.';
+    dom.peopleList.append(empty);
+    return;
+  }
+  for (const guest of guests) {
+    const item = document.createElement('li');
+    const name = document.createElement('span');
+    name.textContent = guest.name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'link-button danger';
+    remove.dataset.remove = guest.id;
+    remove.textContent = 'Remove';
+    remove.setAttribute('aria-label', `Remove ${guest.name}`);
+    item.append(name, remove);
+    dom.peopleList.append(item);
+  }
+}
+
+dom.peopleList.addEventListener('click', (event) => {
+  const id = event.target.closest('[data-remove]')?.dataset.remove;
+  if (!id) return;
+  const name = nameOf(id);
+  if (!window.confirm(`Remove ${name} from the room?\n\nThey go back to the passcode page, and this sign-in stops working.`)) return;
+  send({ type: 'remove', id });
+});
+
+// Removing someone does not stop them typing the passcode in again, so offer
+// to change it straight away.
+function offerNewPasscode(name) {
+  const keepOut = window.confirm(
+    `${name} has been removed.\n\nChange the passcode as well, so they cannot sign back in? ` +
+      'Everyone still here stays. Anyone who joins later needs the new one, which will show on your page.'
+  );
+  if (keepOut) changePasscode();
+  else toast(`${name} has been removed.`, 5000);
+}
+
+async function changePasscode() {
+  try {
+    const response = await fetch('/api/passcode', { method: 'POST', credentials: 'same-origin' });
+    if (!response.ok) throw new Error(String(response.status));
+    const { guestPasscode } = await response.json();
+    dom.guestPasscode.textContent = guestPasscode;
+    toast(`Their passcode is now ${guestPasscode}. The old one no longer works.`, 15_000);
+  } catch {
+    toast('Could not change the passcode. Try again in a moment.', 6000);
+  }
+}
+
+dom.btnNewPasscode.addEventListener('click', () => {
+  if (!window.confirm('Change their passcode?\n\nEveryone here stays. The old one stops working for anyone signing in from now on.')) return;
+  changePasscode();
+});
 
 // Picking one shows it straight away on the host's own screen, as a preview;
 // saving shows everyone.
@@ -1407,6 +1493,7 @@ function showGate(message) {
 function enterRoom() {
   if (state.entered) return;
   state.entered = true;
+  state.removed = false;
   dom.gate.hidden = true;
   dom.app.hidden = false;
   connect();

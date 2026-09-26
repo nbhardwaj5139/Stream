@@ -569,3 +569,129 @@ test('clearing the surprise takes it off a guest who is already here', async () 
   late.close();
   await room.close();
 });
+
+// The host shows a guest out.
+async function removalRoom(options = {}) {
+  const room = await freshRoom(options);
+  const base = `http://127.0.0.1:${room.server.address().port}`;
+  const ws = `${base.replace('http', 'ws')}/ws`;
+  const hostCookie = await joinFor(HOST_PASSCODE, base);
+  const host = connect(hostCookie, ws);
+  await host.opened();
+  const guestCookie = await joinFor(GUEST_PASSCODE, base);
+  const guest = connect(guestCookie, ws);
+  await guest.opened();
+  const other = await room.join(GUEST_PASSCODE);
+  const guestId = (await guest.next('welcome')).you.id;
+  return { room, base, ws, host, guest, other, guestCookie, guestId, hostCookie };
+}
+
+const closed = (client) =>
+  new Promise((resolve) => {
+    if (client.socket.readyState === WebSocket.CLOSED) resolve();
+    else client.socket.addEventListener('close', resolve, { once: true });
+  });
+
+test('the host can remove a guest, who is told, disconnected, and gone from the room', async () => {
+  const { room, host, guest, other, guestId } = await removalRoom();
+  host.send({ type: 'remove', id: guestId });
+
+  assert.equal((await guest.next('removed')).type, 'removed', 'told why, so their page does not just reconnect');
+  await closed(guest);
+  const ok = await host.next('removed-ok');
+  assert.ok(ok.name, 'the host hears it worked');
+  await other.next((m) => m.type === 'presence' && !m.viewers.some((v) => v.id === guestId));
+  assert.equal(room.server.room.viewers.has(guestId), false);
+  assert.equal(other.socket.readyState, WebSocket.OPEN, 'everyone else stays');
+
+  host.close();
+  other.close();
+  await room.close();
+});
+
+test('a removed sign-in stops working: no reconnecting, and no session', async () => {
+  const { room, base, ws, host, guest, other, guestCookie, guestId } = await removalRoom();
+  host.send({ type: 'remove', id: guestId });
+  await closed(guest);
+
+  const again = connect(guestCookie, ws);
+  await assert.rejects(again.opened(), /refused/, 'the old cookie cannot reconnect');
+  const session = await fetch(`${base}/api/session`, { headers: { cookie: guestCookie } });
+  assert.equal(session.status, 401);
+
+  host.close();
+  other.close();
+  await room.close();
+});
+
+test('removals survive a restart of the room', async () => {
+  const sessionSecret = 'a-fixed-secret-for-this-test-only-000000';
+  let saved = [];
+  const first = await removalRoom({ sessionSecret, onRevokedChange: (list) => { saved = list; } });
+  first.host.send({ type: 'remove', id: first.guestId });
+  await closed(first.guest);
+  assert.equal(saved.length, 1, 'handed over to be kept');
+  assert.doesNotMatch(JSON.stringify(saved), new RegExp(first.guestCookie.split('=')[1].slice(0, 20)), 'not the cookie itself');
+  first.host.close();
+  first.other.close();
+  await first.room.close();
+
+  const second = await freshRoom({ sessionSecret, revokedSessions: saved });
+  const base = `http://127.0.0.1:${second.server.address().port}`;
+  const session = await fetch(`${base}/api/session`, { headers: { cookie: first.guestCookie } });
+  assert.equal(session.status, 401, 'still out after the restart');
+  await second.close();
+});
+
+test('only the host can remove anyone, and only guests can be removed', async () => {
+  const { room, host, guest, other, guestId } = await removalRoom();
+  const hostId = (await host.next('welcome')).you.id;
+
+  guest.send({ type: 'remove', id: (await other.next('welcome')).you.id });
+  assert.match((await guest.next('error')).error, /Only the host/);
+  host.send({ type: 'remove', id: hostId });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(room.server.room.viewers.size, 3, 'nobody went anywhere');
+  assert.equal(room.server.room.viewers.has(guestId), true);
+
+  host.close();
+  guest.close();
+  other.close();
+  await room.close();
+});
+
+test('the host can change the guest passcode; the old one stops working, and nobody here is thrown out', async () => {
+  let told = null;
+  const { room, base, host, guest, other, hostCookie, guestCookie } = await removalRoom({
+    onPasscodeChange: ({ guestPasscode }) => { told = guestPasscode; },
+  });
+
+  const before = await fetch(`${base}/api/settings`, { headers: { cookie: hostCookie } }).then((r) => r.json());
+  assert.equal(before.guestPasscode, GUEST_PASSCODE, 'the host can see it on their page');
+
+  const denied = await fetch(`${base}/api/passcode`, { method: 'POST', headers: { cookie: guestCookie } });
+  assert.equal(denied.status, 403, 'a guest cannot change it');
+
+  const changed = await fetch(`${base}/api/passcode`, { method: 'POST', headers: { cookie: hostCookie } }).then((r) => r.json());
+  assert.match(changed.guestPasscode, /^\S{4,}$/);
+  assert.notEqual(changed.guestPasscode, GUEST_PASSCODE);
+  assert.notEqual(changed.guestPasscode, HOST_PASSCODE);
+  assert.equal(told, changed.guestPasscode, 'handed over to be kept');
+
+  const old = await fetch(`${base}/api/join`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passcode: GUEST_PASSCODE }),
+  });
+  assert.equal(old.status, 401, 'the old passcode no longer works');
+  await joinFor(changed.guestPasscode, base);
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(guest.socket.readyState, WebSocket.OPEN, 'people already here stay');
+  assert.equal(other.socket.readyState, WebSocket.OPEN);
+  const stillIn = await fetch(`${base}/api/session`, { headers: { cookie: guestCookie } });
+  assert.equal(stillIn.status, 200, 'and can reconnect if their connection blinks');
+
+  host.close();
+  guest.close();
+  other.close();
+  await room.close();
+});

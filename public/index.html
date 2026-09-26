@@ -108,6 +108,14 @@
               <span id="tonight-status" class="tonight-status" role="status"></span>
               <button id="tonight-save" class="button primary" type="submit">Save</button>
             </div>
+
+            <div class="people">
+              <div class="people-head">
+                <span>Their passcode <code id="guest-passcode">······</code></span>
+                <button id="btn-new-passcode" class="link-button" type="button">Change</button>
+              </div>
+              <ul id="people-list" class="people-list" aria-label="Who is here"></ul>
+            </div>
           </form>
         </div>
       </div>
@@ -115,7 +123,7 @@
       <div id="share-strip" class="share-strip" hidden>
         <span class="share-dot" aria-hidden="true"></span>
         <span id="share-strip-text" title="While this window is on the screen you are sharing, the preview shows itself inside itself. That is normal; they see your screen, not a tunnel.">Live</span>
-        <button id="btn-share-view" class="share-strip-button" type="button">Note &amp; look</button>
+        <button id="btn-share-view" class="share-strip-button" type="button">Settings</button>
       </div>
 
       <div id="overlay" class="overlay" hidden>
