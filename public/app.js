@@ -59,9 +59,27 @@ const state = {
   entered: false,
   // Set when this browser reconnects while still holding a capture: the room
   // forgot the share when the old connection went, so claim it back and offer
-  // the picture to everyone again as soon as we know who is here.
+  // the picture to whoever lost it as soon as we know who is here.
   reclaimShare: false,
+  // Viewer side. The sharer's connection to the site went, but the picture
+  // may still be arriving: keep showing it while they come back.
+  away: null, // { name, timer }
+  // Why the last share ended, so the waiting screen can say so in words.
+  ended: null, // { name, reason: 'stopped' | 'left' }
+  // The picture's own connection has dropped and is being re-offered.
+  lost: false,
+  lostTimer: null,
+  everConnected: false,
 };
+
+// How long a viewer keeps the last picture while the sharer's connection to
+// the site is gone. Long enough for a Wi-Fi hiccup or the tunnel restarting;
+// short enough that a laptop that has actually gone away is said to have.
+const AWAY_GRACE_MS = 45_000;
+// How long a blink may last before the viewer is told about it.
+const AWAY_NOTICE_MS = 3000;
+// A connection that drops and mends inside this is not worth a notification.
+const DROP_NOTICE_MS = 4000;
 
 // ------------------------------------------------------------------ misc --
 
@@ -91,6 +109,8 @@ const showOverlay = (text, { sound = false } = {}) => {
 const hideOverlay = () => { dom.overlay.hidden = true; };
 
 const isScreenMode = () => Boolean(state.room?.sharerId);
+// A picture is on this screen: a share is running, or one is being waited out.
+const showingScreen = () => isScreenMode() || Boolean(state.away);
 const others = () => state.viewers.filter((viewer) => viewer.id !== state.me?.id);
 const nameOf = (id) => state.viewers.find((viewer) => viewer.id === id)?.name ?? 'the other side';
 
@@ -98,6 +118,36 @@ function listNames(viewers, verb) {
   if (viewers.length === 0) return '';
   const names = viewers.map((viewer) => viewer.name).join(' and ');
   return `${names} ${viewers.length === 1 ? verb[0] : verb[1]}`;
+}
+
+// The host is usually looking at the film, full screen in another program, not
+// at this page. A notification is the one thing that reaches them there. Only
+// used when this page does not have focus: when it does, a toast is enough.
+function notify(title, body) {
+  const wanted = typeof Notification !== 'undefined' && Notification.permission === 'granted';
+  if (!wanted || document.hasFocus()) return false;
+  try {
+    // One tag per subject, so a flapping connection replaces its notice
+    // rather than stacking a column of them.
+    new Notification(title, { body, tag: `stream:${title}` });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Tell the host, wherever they are looking.
+function tellHost(title, body) {
+  if (state.role !== 'host') return;
+  if (!notify(title, body)) toast(`${title} — ${body}`, 7000);
+}
+
+// Asked at the moment of sharing, because that is the click it belongs to.
+function askToNotify() {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
+  // Older Safari takes a callback and returns nothing, so there may be no
+  // promise to catch.
+  Notification.requestPermission()?.catch?.(() => {});
 }
 
 // --------------------------------------------------------------- network --
@@ -196,20 +246,32 @@ function handleMessage(message) {
       break;
 
     case 'presence': {
+      state.previousViewers = state.viewers.map((viewer) => [viewer.id, viewer]);
       const known = new Set(state.viewers.map((viewer) => viewer.id));
       state.viewers = message.viewers ?? [];
       const here = new Set(state.viewers.map((viewer) => viewer.id));
       if (screenShare.sharing) {
         for (const viewer of others()) {
-          // Somebody who joins mid-share needs their own offer — and after a
-          // reclaim, so does everybody.
-          if (state.reclaimShare || !known.has(viewer.id)) screenShare.offerTo(viewer.id);
+          if (!known.has(viewer.id)) {
+            // Somebody who joins mid-share needs their own offer.
+            screenShare.offerTo(viewer.id);
+          } else if (state.reclaimShare && screenShare.peers.get(viewer.id)?.connectionState !== 'connected') {
+            // After a reclaim, only whoever actually lost the picture. For the
+            // rest it never stopped, and offering again would interrupt it.
+            screenShare.offerTo(viewer.id);
+          }
         }
         state.reclaimShare = false;
       }
+      if (state.role === 'host' && state.me) noticeComingsAndGoings(known, here);
       // Somebody who left is not coming back under the same id, so stop
       // reconnecting to them — otherwise a closed tab is retried all evening.
-      for (const id of known) if (!here.has(id)) screenShare.forget(id);
+      // Only the sharer does this: a viewer's one connection is to the
+      // sharer, and when the sharer's connection to the site blinks, the
+      // picture is still arriving on it. Closing it here froze the picture.
+      if (screenShare.sharing) {
+        for (const id of known) if (!here.has(id)) screenShare.forget(id);
+      }
       renderPresence();
       break;
     }
@@ -226,6 +288,8 @@ function handleMessage(message) {
 
     case 'chat':
       appendChat(message.entry);
+      // Somebody asking to pause needs to reach the person with the remote.
+      if (message.entry.from !== state.me?.id) notify(message.entry.name, message.entry.text);
       break;
 
     case 'error':
@@ -263,39 +327,219 @@ async function playVideo() {
   }
 }
 
+// Tell the host when somebody arrives or leaves — but not when they are only
+// reconnecting, which looks like leaving and arriving again a moment later
+// under a new id with the same name.
+const recentlyLeft = new Map(); // name -> when they went
+const REJOIN_WINDOW_MS = 20_000;
+
+function noticeComingsAndGoings(known, here) {
+  const before = new Map(state.previousViewers ?? []);
+
+  // Only guests: a host's own connection coming and going — this very page
+  // reconnecting — shows up here too, and is not news to them.
+  for (const viewer of others()) {
+    if (viewer.role === 'host' || known.has(viewer.id)) continue;
+    const left = recentlyLeft.get(viewer.name);
+    recentlyLeft.delete(viewer.name);
+    if (left && Date.now() - left < REJOIN_WINDOW_MS) continue;
+    tellHost(
+      `${viewer.name} joined`,
+      screenShare.sharing ? 'Their picture is connecting.' : 'Press Share screen when you are ready.'
+    );
+  }
+
+  for (const id of known) {
+    if (here.has(id) || id === state.me?.id) continue;
+    const gone = before.get(id);
+    if (!gone || gone.role === 'host') continue;
+    const { name } = gone;
+    recentlyLeft.set(name, Date.now());
+    setTimeout(() => {
+      // Back already, under a new connection: nothing to say.
+      if (state.viewers.some((viewer) => viewer.name === name && viewer.id !== state.me?.id)) return;
+      tellHost(`${name} left`, 'They are no longer in the room.');
+    }, DROP_NOTICE_MS * 2);
+  }
+}
+
 function applyState(room) {
   const wasShowing = isScreenMode();
   state.room = room;
 
   if (isScreenMode()) {
+    // Whatever was being waited out is over: the share is running again.
+    endAway();
+    state.ended = null;
     if (screenShare.sharing) {
       renderSharingCard();
-    } else if (!wasShowing) {
-      // A share has just begun. Clear anything left from a previous one and
-      // wait for the offer, which follows within a second.
-      dom.video.srcObject = null;
+    } else if (!dom.video.srcObject) {
+      // A share has just begun. Wait for the offer, which follows within a
+      // second.
       dom.placeholder.hidden = true;
       dom.video.hidden = false;
       showOverlay('Connecting to their screen…');
     }
-  } else {
-    // The room says nobody is sharing. A capture this browser still holds is
-    // kept: this is the moment a dropped connection is reclaiming it, and the
-    // room hears so the instant our "share" message arrives.
-    if (wasShowing && !screenShare.sharing) {
-      screenShare.closeAll();
-      dom.video.srcObject = null;
-      dom.video.muted = false;
-      state.needsGesture = false;
-      hideOverlay();
+    // Otherwise a picture is already here — the sharer's connection to the
+    // site blinked and they have taken the share back. It never stopped, so
+    // leave it alone.
+  } else if (wasShowing && !screenShare.sharing) {
+    if (room.reason === 'left') {
+      // Their connection to the site went, but the picture is a separate
+      // connection and may well still be coming. Keep it, and give them a
+      // while to come back before calling it over.
+      beginAway(room.by);
+    } else {
+      stopWatching({ name: room.by, reason: 'stopped' });
     }
-    if (!screenShare.sharing) renderWaiting();
+  } else if (!screenShare.sharing && !state.away) {
+    renderWaiting();
   }
 
   renderTitle();
   renderPermissions();
   renderSound();
   updateSyncBadge();
+}
+
+function beginAway(name) {
+  endAway();
+  const who = name ?? 'They';
+  state.away = {
+    name: who,
+    timer: setTimeout(() => {
+      // Long enough: they have gone, not blinked.
+      stopWatching({ name, reason: 'left' });
+      renderTitle();
+      renderSound();
+      updateSyncBadge();
+    }, AWAY_GRACE_MS),
+    // The picture's own connection cannot be trusted to notice: when the far
+    // end vanishes outright it can go on reporting "connected" for most of a
+    // minute. The room noticing is the reliable signal, so say so — after a
+    // moment, so that a one-second blink shows nothing at all.
+    notice: setTimeout(() => {
+      if (state.away) showOverlay(`Lost contact with ${who} — waiting for them to come back…`);
+    }, AWAY_NOTICE_MS),
+  };
+}
+
+function endAway() {
+  if (!state.away) return;
+  clearTimeout(state.away.timer);
+  clearTimeout(state.away.notice);
+  const wasShowingNotice = !dom.overlay.hidden && /^Lost contact/.test(dom.overlayText.textContent);
+  state.away = null;
+  if (wasShowingNotice && !state.lost) {
+    hideOverlay();
+    toast('Back — the picture is live again.', 4000);
+  }
+}
+
+// The share is over: drop the picture and say why.
+function stopWatching(ended) {
+  endAway();
+  clearTimeout(state.lostTimer);
+  state.lost = false;
+  state.everConnected = false;
+  screenShare.closeAll();
+  dom.video.srcObject = null;
+  dom.video.muted = false;
+  state.needsGesture = false;
+  state.ended = ended;
+  hideOverlay();
+  renderWaiting();
+}
+
+// Viewer side: what the picture's own connection is doing, in words.
+function viewerConnectionChanged(connectionState) {
+  if (connectionState === 'connected') {
+    clearTimeout(state.lostTimer);
+    const wasLost = state.lost;
+    state.lost = false;
+    state.everConnected = true;
+    hideOverlay();
+    if (state.needsGesture) showOverlay('Tap anywhere for sound', { sound: true });
+    if (wasLost) toast('Back — the picture is live again.', 4000);
+    return;
+  }
+
+  if (connectionState === 'disconnected' || connectionState === 'failed') {
+    if (!state.everConnected) {
+      if (connectionState !== 'failed') return;
+      // Never got going at all: almost always two networks that will not
+      // connect directly.
+      showOverlay(
+        state.capabilities.iceServers?.length
+          ? 'Could not connect, even through the relay.'
+          : 'Could not connect directly between the two networks. A TURN relay is needed — see --turn in the README.'
+      );
+      return;
+    }
+    if (state.lost) return;
+    // It was working. The frozen frame stays behind this; the host's side is
+    // already offering again, and so will we if it takes a while.
+    state.lost = true;
+    showOverlay(
+      state.away
+        ? `Lost contact with ${state.away.name} — waiting for them to come back…`
+        : 'Connection lost — reconnecting…'
+    );
+    clearTimeout(state.lostTimer);
+    state.lostTimer = setTimeout(() => {
+      if (!state.lost) return;
+      showOverlay('Still trying to reconnect. It will pick up by itself as soon as the connection is back.');
+    }, 20_000);
+    updateSyncBadge();
+  }
+}
+
+// Host side: a viewer's picture dropped or came back. The host is probably
+// watching the film, not this page, so this is where the notifications are.
+const dropNotices = new Map(); // viewerId -> { timer, notified, everConnected }
+
+function hostConnectionChanged(id, connectionState) {
+  const name = nameOf(id);
+  const entry = dropNotices.get(id) ?? { timer: null, notified: false, everConnected: false };
+  dropNotices.set(id, entry);
+
+  if (connectionState === 'connected') {
+    if (!entry.everConnected) tellHost(`${name} is watching`, 'Your screen is reaching them.');
+    entry.everConnected = true;
+    clearTimeout(entry.timer);
+    entry.timer = null;
+    if (entry.notified) {
+      entry.notified = false;
+      tellHost(`${name} is back`, 'The picture is reaching them again — carry on.');
+      renderTitle();
+    }
+    return;
+  }
+
+  // Never reached them at all: that is two networks that will not connect,
+  // not a drop, and pausing will not help. Say what will.
+  if (connectionState === 'failed' && !entry.everConnected) {
+    toast(
+      state.capabilities.iceServers?.length
+        ? `Could not reach ${name}, even through the relay.`
+        : `Could not reach ${name} directly between the two networks. A TURN relay is needed — see --turn in the README.`,
+      12_000
+    );
+    return;
+  }
+
+  if (['disconnected', 'failed', 'reconnecting'].includes(connectionState)) {
+    if (!entry.everConnected || entry.timer || entry.notified) return;
+    // Wait a moment: most drops mend themselves before anyone would notice.
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      const peer = screenShare.peers.get(id);
+      if (peer?.connectionState === 'connected') return;
+      entry.notified = true;
+      document.title = `⚠ ${name} dropped — Stream`;
+      tellHost(`${name}'s picture dropped`, 'Pause the film if you do not want them to miss anything. It is reconnecting by itself.');
+    }, DROP_NOTICE_MS);
+  }
 }
 
 // Says what is happening in words, because a status code means nothing to
@@ -309,8 +553,19 @@ function updateSyncBadge() {
     return;
   }
   if (screenShare.sharing) {
-    badge.textContent = 'Sharing your screen';
-    badge.dataset.state = 'ok';
+    const dropped = [...dropNotices.values()].some((entry) => entry.notified);
+    badge.textContent = dropped ? 'Sharing — someone dropped' : 'Sharing your screen';
+    badge.dataset.state = dropped ? 'drifting' : 'ok';
+    return;
+  }
+  if (state.away) {
+    badge.textContent = `Reconnecting to ${state.away.name}…`;
+    badge.dataset.state = 'drifting';
+    return;
+  }
+  if (state.lost) {
+    badge.textContent = 'Reconnecting…';
+    badge.dataset.state = 'drifting';
     return;
   }
   if (isScreenMode()) {
@@ -358,10 +613,19 @@ function renderWaiting() {
   }
 
   const host = state.viewers.find((viewer) => viewer.role === 'host' && viewer.id !== state.me?.id);
-  dom.placeholderTitle.textContent = 'Waiting for the film to start';
-  dom.placeholderText.textContent = host
-    ? `${host.name} is here. Their screen will appear by itself when they share it.`
-    : 'Their screen will appear here by itself as soon as they share it.';
+  if (state.ended?.reason === 'stopped') {
+    dom.placeholderTitle.textContent = `${state.ended.name ?? 'They'} stopped sharing`;
+    dom.placeholderText.textContent = 'Their screen will appear here again the moment they share it.';
+  } else if (state.ended?.reason === 'left' && !host) {
+    dom.placeholderTitle.textContent = `Lost contact with ${state.ended.name ?? 'them'}`;
+    dom.placeholderText.textContent =
+      'Their screen will appear here again by itself when they are back.';
+  } else {
+    dom.placeholderTitle.textContent = 'Waiting for the film to start';
+    dom.placeholderText.textContent = host
+      ? `${host.name} is here. Their screen will appear by itself when they share it.`
+      : 'Their screen will appear here by itself as soon as they share it.';
+  }
   // The host is already named above, so only mention anyone else.
   const rest = others().filter((viewer) => viewer.id !== host?.id);
   dom.placeholderHint.textContent =
@@ -371,7 +635,13 @@ function renderWaiting() {
 function renderTitle() {
   if (screenShare.sharing) {
     dom.nowShowing.textContent = 'Sharing your screen';
-    document.title = 'Sharing — Stream';
+    const dropped = [...dropNotices.entries()].find(([, entry]) => entry.notified);
+    // The tab title shows on the taskbar, so it carries a drop even when a
+    // notification was refused.
+    document.title = dropped ? `⚠ ${nameOf(dropped[0])} dropped — Stream` : 'Sharing — Stream';
+  } else if (state.away) {
+    dom.nowShowing.textContent = `${state.away.name}'s screen`;
+    document.title = 'Reconnecting — Stream';
   } else if (isScreenMode()) {
     dom.nowShowing.textContent = `${nameOf(state.room.sharerId)}'s screen`;
     document.title = 'Their screen — Stream';
@@ -389,7 +659,7 @@ function renderPermissions() {
 // Muted playback is the easiest thing in the room to miss, so the control says
 // which state it is in rather than only offering to change it.
 function renderSound() {
-  dom.btnSound.hidden = !isScreenMode() || screenShare.sharing;
+  dom.btnSound.hidden = !showingScreen() || screenShare.sharing;
 
   const muted = dom.video.muted || dom.video.volume === 0;
   dom.btnSound.dataset.muted = String(muted);
@@ -425,7 +695,7 @@ function renderPresence() {
   const count = others().length;
   dom.panelLabel.textContent = count ? `Chat · ${count}` : 'Chat';
   if (screenShare.sharing) renderSharingCard();
-  else if (!isScreenMode()) renderWaiting();
+  else if (!showingScreen()) renderWaiting();
   renderTitle();
 }
 
@@ -552,6 +822,7 @@ const screenShare = new ScreenShare({
   send: (message) => send(message),
   onStream: (stream) => {
     // Guest side: the host's screen has arrived.
+    state.ended = null;
     dom.video.srcObject = stream;
     dom.video.muted = false;
     dom.video.hidden = false;
@@ -561,32 +832,14 @@ const screenShare = new ScreenShare({
     updateSyncBadge();
   },
   onStateChange: (id, connectionState) => {
-    if (connectionState === 'reconnecting') {
-      const message = 'Connection dropped — reconnecting…';
-      if (screenShare.sharing) toast(message, 4000);
-      else showOverlay(message);
+    if (screenShare.sharing) {
+      hostConnectionChanged(id, connectionState);
+      if (connectionState === 'still-trying') {
+        toast('Still trying to reach them — it will pick up by itself when the network is back.', 8000);
+      }
       return;
     }
-    if (connectionState === 'connected') {
-      if (!screenShare.sharing) hideOverlay();
-      return;
-    }
-    if (connectionState === 'still-trying') {
-      // The quick attempts are spent, so this is a network that is actually
-      // down. It keeps trying on a slow beat, and says so rather than looking
-      // like it has stopped caring.
-      const message = 'Still trying to reconnect — it will pick up by itself when the network is back.';
-      if (screenShare.sharing) toast(message, 8000);
-      else showOverlay(message);
-      return;
-    }
-    if (connectionState !== 'failed') return;
-    // Almost always a network that will not allow a direct connection.
-    const message = state.capabilities.iceServers?.length
-      ? 'Could not connect, even through the relay.'
-      : 'Could not connect directly between the two networks. A TURN relay is needed — see --turn in the README.';
-    if (screenShare.sharing) toast(message, 12_000);
-    else showOverlay(message);
+    viewerConnectionChanged(connectionState);
   },
   onEnded: () => {
     statsSampler.previous.clear();
@@ -594,6 +847,8 @@ const screenShare = new ScreenShare({
     dom.btnShare.querySelector('span').textContent = 'Share screen';
     dom.btnShare.setAttribute('aria-pressed', 'false');
     state.reclaimShare = false;
+    for (const entry of dropNotices.values()) clearTimeout(entry.timer);
+    dropNotices.clear();
     send({ type: 'share', on: false });
     renderWaiting();
     renderTitle();
@@ -610,13 +865,13 @@ const probe = new ConnectionProbe({ send: (message) => send(message) });
 const wakeLock = new WakeLock();
 
 function updateWakeLock() {
-  wakeLock.want(isScreenMode() || screenShare.sharing);
+  wakeLock.want(showingScreen() || screenShare.sharing);
 }
 
 const statsSampler = new StatsSampler();
 
 async function updateLinkStats() {
-  if (!isScreenMode() || screenShare.peers.size === 0) {
+  if (!showingScreen() || screenShare.peers.size === 0) {
     dom.linkStats.hidden = true;
     return;
   }
@@ -714,6 +969,8 @@ dom.btnShare.addEventListener('click', () => {
     screenShare.stop();
     return;
   }
+  // So a dropped connection can reach the host while the film is full screen.
+  askToNotify();
   // The picker is narrowed to whole screens and asks for audio already, so
   // there is nothing left to explain unless it comes back silent.
   startSharing();
@@ -797,7 +1054,11 @@ let blankSince = 0;
 function nudgeScreenShare() {
   const sharer = state.room?.sharerId;
   const waiting =
-    state.connected && sharer && sharer !== state.me?.id && !screenShare.sharing && !dom.video.srcObject;
+    state.connected &&
+    sharer &&
+    sharer !== state.me?.id &&
+    !screenShare.sharing &&
+    (!dom.video.srcObject || state.lost);
 
   if (!waiting) {
     blankSince = 0;

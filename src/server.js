@@ -343,8 +343,11 @@ export async function createServer(options = {}) {
           break;
 
         case 'share': {
-          const result = room.setSharing(self, Boolean(message.on));
-          if (result.changed) broadcastState();
+          const on = Boolean(message.on);
+          const result = room.setSharing(self, on);
+          // Say why a share ended, so the other side can tell "they stopped"
+          // from "their connection blinked" — the second is worth waiting out.
+          if (result.changed) broadcast({ ...room.snapshot(), ...(on ? {} : { reason: 'stopped', by: self.name }) });
           else if (result.reason === 'not-allowed') {
             connection.send({ type: 'error', error: 'Only the host can share a screen.' });
           }
@@ -375,8 +378,10 @@ export async function createServer(options = {}) {
       const { viewer: removed, endedShare } = room.removeViewer(viewer.id);
       if (!removed) return;
       broadcastPresence();
-      // Their screen left with them.
-      if (endedShare) broadcastState();
+      // Their screen left with them — or their connection to the site did,
+      // with the picture still running. The viewers cannot tell which yet, so
+      // they are told it was lost rather than stopped.
+      if (endedShare) broadcast({ ...room.snapshot(), reason: 'left', by: removed.name });
     });
   });
 

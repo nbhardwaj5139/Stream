@@ -341,6 +341,13 @@ export class ScreenShare {
         // existing peer would change that peer's DTLS fingerprint mid-life,
         // which no browser accepts. Start again on this side too.
         if (peer) this.close(from);
+        // A viewer watches one screen. An offer from a different id is the
+        // same sharer back on a new connection to the site, so the old peer
+        // is finished — and left open, it would report its own death later
+        // as a dropped picture.
+        if (!this.stream) {
+          for (const other of [...this.peers.keys()]) if (other !== from) this.close(other);
+        }
         peer = this._peer(from);
       }
       if (!peer) return; // an answer for a connection that is already gone

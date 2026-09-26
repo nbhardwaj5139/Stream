@@ -133,9 +133,41 @@ Films are long and networks are not perfect, so nothing here gives up.
 - **The tunnel.** If cloudflared drops — the laptop slept, the network changed
   — it is restarted by itself, and the window says so.
 
-A shared screen is live, so there is nothing to pause or rewind: what played
-while a connection was down is gone. If one of you drops, pause the film in the
-player on the host machine.
+### Who is told what
+
+A shared screen is live, so nothing here can pause the film: what plays while a
+connection is down is gone. What it can do is make sure each side knows, so the
+host can pause and resume in the player.
+
+**The viewer** sees, in words over the picture:
+
+- *Connection lost — reconnecting…* when the picture's connection drops, and
+  *Still trying…* if it takes more than twenty seconds; then *Back* when it
+  returns.
+- *Lost contact with Sam — waiting for them to come back…* when the host's
+  connection to the room goes. It waits three seconds before saying so, so a
+  blink shows nothing, and holds on to the last picture for 45 seconds in case
+  it is only that. The picture's own connection is not trusted to notice this:
+  when the far end vanishes outright it can go on reporting itself healthy for
+  most of a minute.
+- *Sam stopped sharing* when that was deliberate.
+
+**The host** is probably looking at the film, full screen in another program,
+not at this page — so when the page does not have focus these arrive as
+Windows notifications, and as messages on the page when it does:
+
+- *Alex joined*, and *Alex is watching* once the picture reaches them.
+- *Alex's picture dropped — pause the film if you do not want them to miss
+  anything*, four seconds into a drop so a hiccup that mends itself says
+  nothing; then *Alex is back — carry on*. While they are away the browser
+  tab's title says so too, which shows on the taskbar.
+- *Alex left*, unless they come straight back — a phone reconnecting looks like
+  leaving and arriving for a moment.
+- Chat messages, so *hang on, pause it* reaches the person with the remote.
+
+The browser asks to show notifications the first time you press Share screen.
+Say yes. They appear on the screen being shared, so the other side sees them
+too.
 
 ## The connection, in numbers
 
@@ -271,7 +303,8 @@ npm test          # unit and integration tests, no dependencies needed
 # optional: two real browsers, end to end
 npm install --no-save playwright
 npx playwright install chromium
-node test/e2e/screen.mjs    # a share, its recovery, and a host reconnecting
+node test/e2e/screen.mjs      # a share, its recovery, and a host reconnecting
+node test/e2e/connection.mjs  # what each side is told as connections come and go
 ```
 
 | File | Does |

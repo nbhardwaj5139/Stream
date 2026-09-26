@@ -345,3 +345,56 @@ test('an answer for a connection that is gone is dropped, not re-created', async
   await host.handleSignal({ from: 'viewer-1', data: { sdp: { type: 'answer', sdp: '' } } });
   assert.equal(built, 0, 'a late answer must not resurrect a closed connection');
 });
+
+test('a viewer keeps one connection: a sharer back under a new id replaces the old', async (t) => {
+  const { ScreenShare } = await import('../public/screen.js');
+  stubWebRTC(t);
+
+  const closed = [];
+  const viewer = new ScreenShare({ send: () => {}, onStream: () => {} });
+  viewer._peer = (id) => {
+    const peer = {
+      id,
+      setRemoteDescription: async () => {},
+      createAnswer: async () => ({ type: 'answer', sdp: '' }),
+      setLocalDescription: async () => {},
+      close: () => closed.push(id),
+      addEventListener: () => {},
+    };
+    viewer.peers.set(id, peer);
+    return peer;
+  };
+
+  const offer = { type: 'offer', sdp: '' };
+  await viewer.handleSignal({ from: 'host-before', data: { sdp: offer } });
+  // The host's connection to the site blinked; it offers again as a new id.
+  await viewer.handleSignal({ from: 'host-after', data: { sdp: offer } });
+
+  assert.deepEqual([...viewer.peers.keys()], ['host-after']);
+  assert.deepEqual(closed, ['host-before'], 'the stale one is closed, not left to fail later');
+});
+
+test('a sharer keeps a connection per viewer, whatever order offers arrive in', async (t) => {
+  const { ScreenShare } = await import('../public/screen.js');
+  stubWebRTC(t);
+
+  // The rule above is for viewers only: a host holding a capture has one
+  // connection per viewer, and none of them may close the others.
+  const host = new ScreenShare({ send: () => {}, onStream: () => {} });
+  host.stream = { getTracks: () => [] };
+  const closed = [];
+  host._peer = (id) => {
+    const peer = {
+      setRemoteDescription: async () => {},
+      createAnswer: async () => ({ type: 'answer', sdp: '' }),
+      setLocalDescription: async () => {},
+      close: () => closed.push(id),
+      addEventListener: () => {},
+    };
+    host.peers.set(id, peer);
+    return peer;
+  };
+  host.peers.set('viewer-1', { close: () => closed.push('viewer-1') });
+  await host.handleSignal({ from: 'viewer-2', data: { sdp: { type: 'offer', sdp: '' } } });
+  assert.deepEqual(closed, []);
+});

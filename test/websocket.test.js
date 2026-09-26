@@ -156,6 +156,9 @@ test('the host sharing tells everyone whose screen to show, and stopping tells t
   host.send({ type: 'share', on: false });
   const stopped = await guest.next((m) => m.type === 'state' && m.sharerId === null);
   assert.ok(stopped.version > started.version);
+  // Said on purpose, and by whom, so the other side can say so in words.
+  assert.equal(stopped.reason, 'stopped');
+  assert.equal(stopped.by, 'Host');
 
   host.close();
   guest.close();
@@ -190,8 +193,11 @@ test('the share ends for everyone when the sharer leaves', async () => {
   await guest.next((m) => m.type === 'state' && m.sharerId);
 
   host.close();
-  await guest.next((m) => m.type === 'state' && m.sharerId === null);
+  const lost = await guest.next((m) => m.type === 'state' && m.sharerId === null);
   assert.equal(room.server.room.sharerId, null);
+  // Not "stopped": the viewer should wait for them rather than give up.
+  assert.equal(lost.reason, 'left');
+  assert.equal(lost.by, 'Host');
 
   guest.close();
   await room.close();
