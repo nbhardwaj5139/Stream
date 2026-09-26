@@ -172,16 +172,26 @@ host can pause and resume in the player.
 
 **The viewer** sees, in words over the picture:
 
-- *Connection lost — reconnecting…* when the picture's connection drops, and
-  *Still trying…* if it takes more than twenty seconds; then *Back* when it
-  returns.
-- *Lost contact with Sam — waiting for them to come back…* when the host's
+- *Disconnected — reconnecting…* when the picture's connection drops, and
+  *Still disconnected…* if it takes more than twenty seconds; then *Back* when
+  it returns.
+- *Disconnected from Sam — waiting for them to come back…* when the host's
   connection to the room goes. It waits three seconds before saying so, so a
   blink shows nothing, and holds on to the last picture for 45 seconds in case
   it is only that. The picture's own connection is not trusted to notice this:
   when the far end vanishes outright it can go on reporting itself healthy for
   most of a minute.
 - *Sam stopped sharing* when that was deliberate.
+- *Disconnected — reconnecting…* on the waiting screen when their own
+  connection to the room drops for more than a few seconds. A film already
+  playing carries on regardless: the picture does not travel through the room.
+
+When the host has left a note, the note stays on the screen through all of
+this — including in place of a dropped or frozen picture — and these lines go
+underneath it. It pops up once per sitting: reconnecting or rejoining in the
+same tab does not spring it on them again, but a changed note always pops, and
+so does a note cleared while they were away (it disappears). The look, the
+heading and the note are kept on the host's laptop, so they survive a restart.
 
 **The host** is probably looking at the film, full screen in another program,
 not at this page — so when the page does not have focus these arrive as

@@ -117,11 +117,11 @@ try {
   console.log('\nthe host\'s picture drops');
   // Cut the host's end: the viewer's side sees its connection go.
   await host.evaluate(() => window.__peers.forEach((peer) => peer.close()));
-  const lost = await waitFor('lost', async () => /Connection lost/.test(await overlay(guest)) && (await overlay(guest)), 15_000);
+  const lost = await waitFor('lost', async () => /Disconnected — reconnecting/.test(await overlay(guest)) && (await overlay(guest)), 15_000);
   check('the viewer is told it is reconnecting', lost, lost);
   const badge = await guest.textContent('#sync-badge');
   check('and the badge agrees', /Reconnecting/.test(badge), badge);
-  const recovered = await waitFor('recovered', async () => !/Connection lost|Still trying/.test(await overlay(guest)), 30_000);
+  const recovered = await waitFor('recovered', async () => !/Disconnected — reconnecting|Still disconnected/.test(await overlay(guest)), 30_000);
   check('and the message goes once the picture is back', recovered);
 
   console.log('\nthe host\'s connection to the site blinks');
@@ -133,7 +133,7 @@ try {
   let flashed = false;
   const until = Date.now() + 6000;
   while (Date.now() < until) {
-    if (/Lost contact/.test(await overlay(guest))) flashed = true;
+    if (/Disconnected from/.test(await overlay(guest))) flashed = true;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   check('a one-second blink shows the viewer nothing', !flashed);
@@ -141,7 +141,7 @@ try {
 
   console.log('\nthe host goes away for real');
   await hostBrowser.close();
-  const away = await waitFor('away', async () => /Lost contact with Sam/.test(await overlay(guest)) && (await overlay(guest)), 10_000);
+  const away = await waitFor('away', async () => /Disconnected from Sam/.test(await overlay(guest)) && (await overlay(guest)), 10_000);
   check('the viewer is told they lost contact', away, away);
 
   console.log('\nthe viewer leaves');

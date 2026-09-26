@@ -31,7 +31,7 @@
         </svg>
         <svg class="icon-heart" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
       </div>
-      <h1 class="love">{{ROOM_NAME}}</h1>
+      <h1 class="love" id="room-name">{{ROOM_NAME}}</h1>
       <p>Enter the passcode you were sent.</p>
 
       <form id="join-form" autocomplete="off">
@@ -90,6 +90,16 @@
               <textarea id="surprise-input" rows="3" maxlength="500"
                         placeholder="Write something only they will see…"></textarea>
             </label>
+            <div class="emoji-row note-emoji" id="surprise-emoji" role="group" aria-label="Add an emoji to the note">
+              <button type="button" data-emoji="💕" aria-label="Two hearts">💕</button>
+              <button type="button" data-emoji="❤️" aria-label="Heart">❤️</button>
+              <button type="button" data-emoji="🥰" aria-label="Smiling with hearts">🥰</button>
+              <button type="button" data-emoji="😘" aria-label="Blowing a kiss">😘</button>
+              <button type="button" data-emoji="🌹" aria-label="Rose">🌹</button>
+              <button type="button" data-emoji="✨" aria-label="Sparkles">✨</button>
+              <button type="button" data-emoji="🍿" aria-label="Popcorn">🍿</button>
+              <button type="button" data-emoji="🌙" aria-label="Moon">🌙</button>
+            </div>
             <label class="field">
               <span>Heading on the passcode page <em>— anyone with the link sees this</em></span>
               <input id="heading-input" type="text" maxlength="80" placeholder="Tonight at the pictures">

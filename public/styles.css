@@ -806,6 +806,24 @@ body.centered {
 /* The theme's paraphernalia is the cozy theme's alone. */
 .cozy { display: none; }
 
+/* What is going wrong, under the note: a small beating dot, so it reads as
+   "happening now" and not as part of the note. */
+.placeholder p.trouble { color: var(--text-dim); }
+.placeholder p.trouble::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin: 0 8px 2px 0;
+  border-radius: 50%;
+  background: var(--warn);
+  vertical-align: middle;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .placeholder p.trouble::before { animation: none; }
+}
+
 .field textarea {
   width: 100%;
   background: var(--surface-2);
@@ -828,6 +846,8 @@ body.centered {
 }
 .tonight[hidden] { display: none; }
 .tonight .field { margin-bottom: 12px; }
+/* Under the note box, not a chat bar: no rule above it, tucked up close. */
+.tonight .note-emoji { border-top: 0; padding: 0; margin: -6px 0 12px; }
 .tonight .field em { font-style: normal; color: var(--muted); font-weight: 400; }
 .tonight textarea {
   resize: vertical;

@@ -38,6 +38,7 @@ const dom = {
   composer: el('composer'),
   chatInput: el('chat-input'),
   emojiRow: el('emoji-row'),
+  surpriseEmoji: el('surprise-emoji'),
   tonight: el('tonight'),
   surpriseInput: el('surprise-input'),
   headingInput: el('heading-input'),
@@ -45,6 +46,7 @@ const dom = {
   reveal: el('reveal'),
   revealText: el('reveal-text'),
   revealX: el('reveal-x'),
+  roomName: el('room-name'),
   toast: el('toast'),
   gate: el('gate'),
   joinForm: el('join-form'),
@@ -78,6 +80,15 @@ const state = {
   lost: false,
   lostTimer: null,
   everConnected: false,
+  // Guest side, when there is a note: what is going wrong, said on the note
+  // rather than over a frozen or black picture. Null when all is well.
+  status: null,
+  // This browser's own connection to the site has been gone a moment.
+  offline: false,
+  // Guest side: the host's name once they have been here, and whether they
+  // have since dropped off the site.
+  lastHost: null,
+  hostGone: false,
 };
 
 // How long a viewer keeps the last picture while the sharer's connection to
@@ -120,6 +131,29 @@ const isScreenMode = () => Boolean(state.room?.sharerId);
 // A picture is on this screen: a share is running, or one is being waited out.
 const showingScreen = () => isScreenMode() || Boolean(state.away);
 const others = () => state.viewers.filter((viewer) => viewer.id !== state.me?.id);
+
+// A problem with the picture, in words. With a note set, the note stays on
+// the screen and this goes under it — her note, not a blank screen, while it
+// sorts itself out. Without one, it goes over the picture as before.
+function showStatus(text) {
+  if (state.role === 'host' || !state.surprise) {
+    showOverlay(text);
+    return;
+  }
+  hideOverlay();
+  state.status = text;
+  renderWaiting();
+}
+
+// The picture is back: take the note away and show it.
+function clearStatus() {
+  if (!state.status) return;
+  state.status = null;
+  if (dom.video.srcObject && showingScreen()) {
+    dom.placeholder.hidden = true;
+    dom.video.hidden = false;
+  }
+}
 const nameOf = (id) => state.viewers.find((viewer) => viewer.id === id)?.name ?? 'the other side';
 
 function listNames(viewers, verb) {
@@ -169,6 +203,27 @@ function send(message) {
 }
 
 let reconnectDelay = 500;
+let offlineTimer = null;
+
+// The waiting screen says when this browser has lost the site — after a
+// moment, so a blink shows nothing. A film already playing carries on (the
+// picture does not come through the site), so it is left alone.
+function setOffline(offline) {
+  const apply = () => {
+    offlineTimer = null;
+    if (state.offline === offline) return;
+    state.offline = offline;
+    if (state.status || (!showingScreen() && !screenShare.sharing)) renderWaiting();
+  };
+  if (offline) {
+    // Every failed attempt to reconnect lands here again; the moment counts
+    // from the first.
+    if (!state.offline && !offlineTimer) offlineTimer = setTimeout(apply, AWAY_NOTICE_MS);
+  } else {
+    clearTimeout(offlineTimer);
+    apply();
+  }
+}
 
 function connect() {
   const url = new URL('/ws', location.href);
@@ -180,6 +235,7 @@ function connect() {
   socket.addEventListener('open', () => {
     state.connected = true;
     reconnectDelay = 500;
+    setOffline(false);
     updateSyncBadge();
     const name = localStorage.getItem('stream:name');
     if (name) send({ type: 'hello', name });
@@ -197,6 +253,7 @@ function connect() {
 
   socket.addEventListener('close', async () => {
     state.connected = false;
+    setOffline(true);
     updateSyncBadge();
     // A session that went away cannot be fixed by retrying; ask again.
     if (await sessionExpired()) {
@@ -238,8 +295,13 @@ function handleMessage(message) {
       dom.roleBadge.hidden = false;
       dom.chat.replaceChildren();
       for (const entry of message.chat ?? []) appendChat(entry, { quiet: true });
-      if (message.theme) applyTheme(message.theme);
-      if (message.surprise) revealSurprise(message.surprise);
+      // The room is the truth about how things look and what is waiting for
+      // them — on a first arrival and on every reconnection alike, so a
+      // blink never leaves either side showing something the room has moved
+      // on from.
+      applyTheme(tonightDirty && themeChoice() ? themeChoice() : message.theme);
+      if (message.roomName) setRoomName(message.roomName);
+      settleSurprise(message.surprise ?? null);
       if (state.role === 'host') loadTonight();
 
       // Back after a dropped connection with the capture still running: the
@@ -292,28 +354,23 @@ function handleMessage(message) {
         probe.handleSignal(message).catch(() => {});
       } else {
         screenShare.handleSignal(message).catch(() => {
-          showOverlay('Could not connect to their screen.');
+          showStatus('Could not connect to their screen.');
         });
       }
       break;
 
     case 'surprise':
-      if (message.text) {
-        revealSurprise(message.text);
-      } else {
-        // Cleared by the host: back to the ordinary waiting screen.
-        state.surprise = null;
-        if (!dom.reveal.hidden) closeReveal();
-        if (!showingScreen() && !screenShare.sharing) renderWaiting();
-      }
+      // Sent only when it changed, so a new one is always worth showing.
+      settleSurprise(message.text || null, { fresh: true });
       break;
 
     case 'room-name':
-      document.title = message.name;
+      setRoomName(message.name);
       break;
 
     case 'theme':
-      applyTheme(message.theme);
+      // A preview the host has not saved yet stays on their own screen.
+      if (!(state.role === 'host' && tonightDirty)) applyTheme(message.theme);
       break;
 
     case 'chat':
@@ -405,10 +462,12 @@ function applyState(room) {
       renderSharingCard();
     } else if (!dom.video.srcObject) {
       // A share has just begun. Wait for the offer, which follows within a
-      // second.
-      dom.placeholder.hidden = true;
-      dom.video.hidden = false;
-      showOverlay('Connecting to their screen…');
+      // second. A note stays up until the film takes its place.
+      if (!state.surprise) {
+        dom.placeholder.hidden = true;
+        dom.video.hidden = false;
+      }
+      showStatus('Connecting to their screen…');
     }
     // Otherwise a picture is already here — the sharer's connection to the
     // site blinked and they have taken the share back. It never stopped, so
@@ -449,7 +508,7 @@ function beginAway(name) {
     // minute. The room noticing is the reliable signal, so say so — after a
     // moment, so that a one-second blink shows nothing at all.
     notice: setTimeout(() => {
-      if (state.away) showOverlay(`Lost contact with ${who} — waiting for them to come back…`);
+      if (state.away) showStatus(`Disconnected from ${who} — waiting for them to come back…`);
     }, AWAY_NOTICE_MS),
   };
 }
@@ -458,10 +517,13 @@ function endAway() {
   if (!state.away) return;
   clearTimeout(state.away.timer);
   clearTimeout(state.away.notice);
-  const wasShowingNotice = !dom.overlay.hidden && /^Lost contact/.test(dom.overlayText.textContent);
+  const wasShowingNotice =
+    /^Disconnected from/.test(state.status ?? '') ||
+    (!dom.overlay.hidden && /^Disconnected from/.test(dom.overlayText.textContent));
   state.away = null;
   if (wasShowingNotice && !state.lost) {
     hideOverlay();
+    clearStatus();
     toast('Back — the picture is live again.', 4000);
   }
 }
@@ -477,6 +539,7 @@ function stopWatching(ended) {
   dom.video.muted = false;
   state.needsGesture = false;
   state.ended = ended;
+  state.status = null;
   hideOverlay();
   renderWaiting();
 }
@@ -489,6 +552,7 @@ function viewerConnectionChanged(connectionState) {
     state.lost = false;
     state.everConnected = true;
     hideOverlay();
+    clearStatus();
     if (state.needsGesture) showOverlay('Tap anywhere for sound', { sound: true });
     if (wasLost) toast('Back — the picture is live again.', 4000);
     return;
@@ -499,7 +563,7 @@ function viewerConnectionChanged(connectionState) {
       if (connectionState !== 'failed') return;
       // Never got going at all: almost always two networks that will not
       // connect directly.
-      showOverlay(
+      showStatus(
         state.capabilities.iceServers?.length
           ? 'Could not connect, even through the relay.'
           : 'Could not connect directly between the two networks. A TURN relay is needed — see --turn in the README.'
@@ -510,15 +574,15 @@ function viewerConnectionChanged(connectionState) {
     // It was working. The frozen frame stays behind this; the host's side is
     // already offering again, and so will we if it takes a while.
     state.lost = true;
-    showOverlay(
+    showStatus(
       state.away
-        ? `Lost contact with ${state.away.name} — waiting for them to come back…`
-        : 'Connection lost — reconnecting…'
+        ? `Disconnected from ${state.away.name} — waiting for them to come back…`
+        : 'Disconnected — reconnecting…'
     );
     clearTimeout(state.lostTimer);
     state.lostTimer = setTimeout(() => {
       if (!state.lost) return;
-      showOverlay('Still trying to reconnect. It will pick up by itself as soon as the connection is back.');
+      showStatus('Still disconnected. It will pick up by itself as soon as the connection is back.');
     }, 20_000);
     updateSyncBadge();
   }
@@ -622,6 +686,7 @@ function renderSharingCard() {
   hideOverlay();
 
   dom.placeholderTitle.classList.remove('love');
+  dom.placeholderText.classList.remove('trouble');
   dom.placeholderTitle.textContent = 'You are sharing this screen';
   dom.placeholderText.textContent =
     'Play the film however you like — everything on this monitor goes across.';
@@ -637,6 +702,7 @@ function renderWaiting() {
 
   dom.tonight.hidden = state.role !== 'host';
   dom.placeholderTitle.classList.remove('love');
+  dom.placeholderText.classList.remove('trouble');
   if (state.role === 'host') {
     dom.placeholderTitle.textContent = 'Ready when you are';
     dom.placeholderText.textContent =
@@ -647,32 +713,77 @@ function renderWaiting() {
   }
 
   const host = state.viewers.find((viewer) => viewer.role === 'host' && viewer.id !== state.me?.id);
-  let showingNote = false;
+  noticeHostGone(host);
+  const who = state.ended?.name ?? state.lastHost ?? 'them';
+  const sharer = state.ended?.name ?? 'They';
+  let trouble = false;
+  let title;
+  let line;
   if (state.ended?.reason === 'stopped') {
-    dom.placeholderTitle.textContent = `${state.ended.name ?? 'They'} stopped sharing`;
-    dom.placeholderText.textContent = 'Their screen will appear here again the moment they share it.';
-  } else if (state.ended?.reason === 'left' && !host) {
-    dom.placeholderTitle.textContent = `Lost contact with ${state.ended.name ?? 'them'}`;
-    dom.placeholderText.textContent =
-      'Their screen will appear here again by itself when they are back.';
-  } else if (state.surprise) {
-    // Their note stays in front of them until the film takes its place.
-    showingNote = true;
-    dom.placeholderTitle.textContent = state.surprise;
-    dom.placeholderText.textContent = host
-      ? `${host.name} is here. The film will appear by itself when they share it.`
-      : 'The film will appear here by itself as soon as they share it.';
+    title = `${sharer} stopped sharing`;
+    line = 'Their screen will appear here again the moment they share it.';
+  } else if (!host && (state.ended?.reason === 'left' || state.hostGone)) {
+    trouble = true;
+    title = `Lost contact with ${who}`;
+    line = 'Their screen will appear here again by itself when they are back.';
   } else {
-    dom.placeholderTitle.textContent = 'Waiting for the film to start';
-    dom.placeholderText.textContent = host
+    title = 'Waiting for the film to start';
+    line = host
       ? `${host.name} is here. Their screen will appear by itself when they share it.`
       : 'Their screen will appear here by itself as soon as they share it.';
   }
-  dom.placeholderTitle.classList.toggle('love', showingNote);
+
+  // Their note stays in front of them, whatever is going on, until the film
+  // takes its place. What is happening goes under it.
+  if (state.surprise) {
+    title = state.surprise;
+    if (state.ended?.reason === 'stopped') {
+      line = `${sharer} stopped sharing. The film will appear here again the moment they share it.`;
+    } else if (trouble) {
+      line = `Disconnected from ${who} — the film will come back by itself when they are back.`;
+    } else {
+      line = line.replace('Their screen', 'The film');
+    }
+  }
+  // Trouble happening right now comes last, so it wins: it is what they need
+  // to know, and it clears by itself.
+  if (state.status) {
+    trouble = true;
+    line = state.status;
+  }
+  if (state.offline) {
+    trouble = true;
+    line = 'Disconnected — reconnecting…';
+  }
+
+  dom.placeholderTitle.textContent = title;
+  dom.placeholderText.textContent = line;
+  dom.placeholderTitle.classList.toggle('love', Boolean(state.surprise));
+  dom.placeholderText.classList.toggle('trouble', trouble);
   // The host is already named above, so only mention anyone else.
   const rest = others().filter((viewer) => viewer.id !== host?.id);
-  dom.placeholderHint.textContent =
-    listNames(rest, ['is here too.', 'are here too.']) || (host ? '' : 'They have not joined yet.');
+  dom.placeholderHint.textContent = trouble
+    ? ''
+    : listNames(rest, ['is here too.', 'are here too.']) || (host ? '' : 'They have not joined yet.');
+}
+
+// The host was here and their connection to the site has gone. Said after a
+// moment, so that their laptop blinking shows nothing at all.
+let hostGoneTimer = null;
+function noticeHostGone(host) {
+  if (host) {
+    state.lastHost = host.name;
+    state.hostGone = false;
+    clearTimeout(hostGoneTimer);
+    hostGoneTimer = null;
+    return;
+  }
+  if (!state.lastHost || state.hostGone || hostGoneTimer) return;
+  hostGoneTimer = setTimeout(() => {
+    hostGoneTimer = null;
+    state.hostGone = true;
+    if (!showingScreen() && !screenShare.sharing) renderWaiting();
+  }, AWAY_NOTICE_MS);
 }
 
 function renderTitle() {
@@ -800,11 +911,57 @@ function appendChat(entry, { quiet = false } = {}) {
 // notification. That tap is also the one a browser wants before it will play
 // sound, so it earns its keep twice. Closed, it stays on their waiting screen
 // until the picture arrives.
+// Once per sitting. A reconnection or a reload in the same tab must not
+// spring it on them again — mid-film, it would land on top of the picture —
+// but a new note always shows, and so does the same one on another evening.
+// sessionStorage is exactly "this tab, until it is closed". Guarded, because
+// a private window can refuse it; then it simply shows each time.
+const REVEALED_KEY = 'stream:revealed';
+
+function alreadyRevealed(text) {
+  try {
+    return sessionStorage.getItem(REVEALED_KEY) === text;
+  } catch {
+    return false;
+  }
+}
+
+function markRevealed(text) {
+  try {
+    sessionStorage.setItem(REVEALED_KEY, text);
+  } catch {
+    /* it will show again next time, which is the lesser problem */
+  }
+}
+
+// Bring the screen into line with whatever note the room has now.
+function settleSurprise(text, { fresh = false } = {}) {
+  state.surprise = text;
+  if (!text) {
+    if (!dom.reveal.hidden) closeReveal();
+  } else if (fresh || !alreadyRevealed(text)) {
+    revealSurprise(text);
+  }
+  if (state.status && !text) {
+    // No note to keep up any more: say it over the picture instead.
+    const status = state.status;
+    state.status = null;
+    if (dom.video.srcObject) {
+      dom.placeholder.hidden = true;
+      dom.video.hidden = false;
+    }
+    showOverlay(status);
+  } else if (state.status || (!showingScreen() && !screenShare.sharing)) {
+    renderWaiting();
+  }
+}
+
 function revealSurprise(text) {
   if (!text) return;
   state.surprise = text;
+  markRevealed(text);
   dom.revealText.textContent = text;
-  if (!showingScreen() && !screenShare.sharing) renderWaiting();
+  if (state.status || (!showingScreen() && !screenShare.sharing)) renderWaiting();
   // A beat after arriving, so it lands rather than flickers in with the page.
   setTimeout(() => {
     dom.reveal.hidden = false;
@@ -834,12 +991,26 @@ function applyTheme(theme) {
 
 const themeChoice = () => dom.tonight.querySelector('input[name="theme"]:checked')?.value;
 
+// The heading lives on the passcode page and in the tab title. Kept current
+// even while they are in the room, so leaving shows the one set now.
+function setRoomName(name) {
+  if (!name) return;
+  dom.roomName.textContent = name;
+  if (!state.entered) document.title = name;
+}
+
+// Edits the host has made but not saved. A reconnection reloads the saved
+// values, and must not wipe out what they were in the middle of.
+let tonightDirty = false;
+dom.tonight.addEventListener('input', () => { tonightDirty = true; });
+
 // The host's side: what they have left for tonight.
 async function loadTonight() {
   try {
     const response = await fetch('/api/settings', { credentials: 'same-origin' });
     if (!response.ok) return;
     const settings = await response.json();
+    if (tonightDirty) return;
     const radio = dom.tonight.querySelector(`input[name="theme"][value="${settings.theme}"]`);
     if (radio) radio.checked = true;
     // Do not overwrite something they are in the middle of typing.
@@ -876,6 +1047,8 @@ dom.tonight.addEventListener('submit', async (event) => {
     });
     if (!response.ok) throw new Error(String(response.status));
     const saved = await response.json();
+    tonightDirty = false;
+    applyTheme(saved.theme);
     const here = others().some((viewer) => viewer.role === 'guest');
     dom.tonightStatus.textContent = saved.surprise
       ? here
@@ -974,25 +1147,30 @@ const TOUCH = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 // Pressing a button normally takes the focus, and with it the box's idea of
 // where the cursor was — so the emoji landed at the start of the sentence.
 // Keeping the focus where it is keeps the cursor too.
-dom.emojiRow.addEventListener('mousedown', (event) => event.preventDefault());
+function emojiButtons(row, input) {
+  row.addEventListener('mousedown', (event) => event.preventDefault());
+  row.addEventListener('click', (event) => {
+    const emoji = event.target.closest('[data-emoji]')?.dataset.emoji;
+    if (!emoji) return;
+    // Mid-sentence if they are typing, otherwise on the end.
+    const typing = document.activeElement === input;
+    const start = typing ? input.selectionStart ?? input.value.length : input.value.length;
+    const end = typing ? input.selectionEnd ?? input.value.length : input.value.length;
+    const next = input.value.slice(0, start) + emoji + input.value.slice(end);
+    if (next.length > input.maxLength && input.maxLength > 0) return;
+    input.value = next;
+    // As if typed, so anything watching the box hears about it.
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const caret = start + emoji.length;
+    if (!TOUCH) {
+      input.focus();
+      input.setSelectionRange(caret, caret);
+    }
+  });
+}
 
-dom.emojiRow.addEventListener('click', (event) => {
-  const emoji = event.target.closest('[data-emoji]')?.dataset.emoji;
-  if (!emoji) return;
-  const input = dom.chatInput;
-  // Mid-sentence if they are typing, otherwise on the end.
-  const typing = document.activeElement === input;
-  const start = typing ? input.selectionStart ?? input.value.length : input.value.length;
-  const end = typing ? input.selectionEnd ?? input.value.length : input.value.length;
-  const next = input.value.slice(0, start) + emoji + input.value.slice(end);
-  if (next.length > input.maxLength && input.maxLength > 0) return;
-  input.value = next;
-  const caret = start + emoji.length;
-  if (!TOUCH) {
-    input.focus();
-    input.setSelectionRange(caret, caret);
-  }
-});
+emojiButtons(dom.emojiRow, dom.chatInput);
+emojiButtons(dom.surpriseEmoji, dom.surpriseInput);
 
 dom.composer.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -1017,6 +1195,7 @@ const screenShare = new ScreenShare({
   onStream: (stream) => {
     // Guest side: the host's screen has arrived.
     state.ended = null;
+    state.status = null;
     dom.video.srcObject = stream;
     dom.video.muted = false;
     dom.video.hidden = false;
@@ -1174,6 +1353,7 @@ dom.btnShare.addEventListener('click', () => {
 
 function showGate(message) {
   state.entered = false;
+  document.title = dom.roomName.textContent;
   dom.gate.hidden = false;
   dom.app.hidden = true;
   if (message) {
