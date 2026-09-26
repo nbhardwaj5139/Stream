@@ -97,7 +97,7 @@ function readJsonBody(req) {
 // sessions on every page load.
 async function assetVersion() {
   const hash = crypto.createHash('sha1');
-  for (const name of ['app.js', 'screen.js', 'probe.js', 'stats.js', 'wakelock.js', 'styles.css']) {
+  for (const name of ['app.js', 'screen.js', 'probe.js', 'selftest.js', 'stats.js', 'wakelock.js', 'styles.css']) {
     try {
       hash.update(await fsp.readFile(path.join(PUBLIC_DIR, name)));
     } catch {

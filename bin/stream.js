@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from '../src/server.js';
 import { generatePasscode, generateToken, shouldReusePasscodes } from '../src/auth.js';
 import { hasCloudflared, startTunnel, startNamedTunnel } from '../src/tunnel.js';
-import { describeProblem, resolveRoots } from '../src/roots.js';
-import { readIngressHostnames } from '../src/cloudflare.js';
+import { describeProblem, discoverMediaRoots, resolveRoots } from '../src/roots.js';
+import { readIngressHostnames, readTunnelName } from '../src/cloudflare.js';
 import { formatPreflight, preflight } from '../src/preflight.js';
 
 const CONFIG_PATH = path.join(os.homedir(), '.stream-room.json');
@@ -151,22 +151,6 @@ function saveConfig(config) {
   }
 }
 
-function defaultDirectories() {
-  const candidates = [
-    path.join(os.homedir(), 'Movies'),
-    path.join(os.homedir(), 'Videos'),
-    path.join(os.homedir(), 'Downloads'),
-  ];
-  const found = candidates.filter((dir) => {
-    try {
-      return fs.statSync(dir).isDirectory();
-    } catch {
-      return false;
-    }
-  });
-  return found.length ? found : [process.cwd()];
-}
-
 function localAddresses(port) {
   const addresses = [];
   for (const interfaces of Object.values(os.networkInterfaces())) {
@@ -216,8 +200,23 @@ if (!options.tunnelName && lastRun.tunnelName && options.tunnel) {
 }
 if (options.port === 8420 && Number.isInteger(lastRun.port)) options.port = lastRun.port;
 
+// A laptop that has been through setup-tunnel but never run the room: the
+// tunnel and hostname are already in cloudflared's own config, so use them
+// rather than falling back to a throwaway link nobody can remember.
+if (options.tunnel && !options.tunnelName && !options.hostname) {
+  const configuredTunnel = readTunnelName();
+  const [configuredHost] = readIngressHostnames();
+  if (configuredTunnel && configuredHost) {
+    options.tunnelName = configuredTunnel;
+    options.hostname = configuredHost;
+    console.log(`Using the tunnel set up on this laptop (${configuredTunnel} → ${configuredHost}).`);
+  }
+}
+
 const { roots, problems } = resolveRoots(
-  options.dirs.length ? options.dirs : defaultDirectories(),
+  options.dirs.length
+    ? options.dirs
+    : discoverMediaRoots({ homedir: os.homedir(), readdir: fs.readdirSync, stat: fs.statSync }),
   { homedir: os.homedir(), stat: fs.statSync }
 );
 
@@ -229,10 +228,6 @@ if (problems.length) {
   process.exit(1);
 }
 
-if (roots.length === 0) {
-  console.error('No folder to share. Pass one, e.g. node bin/stream.js "D:\\Movies"');
-  process.exit(1);
-}
 
 // A relay is set up once and then wanted every time. Take it from the flags,
 // then the environment, then what was used last time — so the evening it
@@ -351,10 +346,20 @@ if (roots.some((root) => root === appDirectory)) {
 }
 
 const count = server.library.items.size;
-console.log(`Found ${count} video file${count === 1 ? '' : 's'} in:`);
-for (const root of roots) console.log(`  ${root}`);
+if (roots.length === 0) {
+  // Not a problem: screen sharing carries anything, and needs no folder. Only
+  // the file list is unavailable, and most evenings never open it.
+  console.log('No movie folder, so this is screen sharing only.');
+  console.log('  Play the film in VLC or anything else and share your screen.');
+  console.log('  To serve files as well, pass a folder: node bin/stream.js "D:\\Movies"');
+} else {
+  console.log(`Found ${count} video file${count === 1 ? '' : 's'} in:`);
+  for (const root of roots) console.log(`  ${root}`);
+}
 
-if (!server.capabilities.ffmpeg) {
+if (roots.length === 0) {
+  /* screen sharing only: ffmpeg is irrelevant, so say nothing about it */
+} else if (!server.capabilities.ffmpeg) {
   console.log(
     '\n  ffmpeg was not found. .mp4 files will still work, but .mkv, .avi and\n' +
       '  anything 4K or HEVC will not play. Install it first:\n' +
@@ -387,6 +392,9 @@ if (options.tunnelName) {
 }
 
 let tunnel = null;
+// Why the public link is not up, if it is not. Anything here means READY
+// would be a lie, and the banner has to say so instead.
+let tunnelProblem = null;
 if (options.tunnel) {
   if (await hasCloudflared()) {
     if (options.tunnelName) {
@@ -402,6 +410,7 @@ if (options.tunnel) {
         }
       } catch (error) {
         console.log(`failed (${error.message})`);
+        tunnelProblem = `The tunnel "${options.tunnelName}" did not connect.`;
       }
     } else {
       process.stdout.write('\nStarting public link... ');
@@ -410,9 +419,11 @@ if (options.tunnel) {
         console.log('done');
       } catch (error) {
         console.log(`failed (${error.message})`);
+        tunnelProblem = 'The public link could not be created.';
       }
     }
   } else {
+    tunnelProblem = 'cloudflared is not installed.';
     console.log(
       '\ncloudflared is not installed, so there is no public link.\n' +
         '  winget install Cloudflare.cloudflared\n' +
@@ -434,9 +445,11 @@ console.log('\n' + '─'.repeat(62));
 console.log('  Send her this link and this passcode:');
 console.log(`\n    ${base}`);
 console.log(`    passcode:  ${guestPasscode}`);
-if (remote) {
+if (remote && roots.length) {
   // Watching your own film through the tunnel sends it out to Cloudflare and
-  // back again, so your upload carries it twice and you both stutter.
+  // back again, so your upload carries it twice and you both stutter. A shared
+  // screen goes browser to browser and never touches the tunnel, so without
+  // files there is nothing to save by opening a different address.
   console.log('\n  On THIS laptop, open the local address instead:');
   console.log(`\n    ${localBase}`);
   console.log(`    passcode:  ${hostPasscode}`);
@@ -459,12 +472,14 @@ if (options.turnUrls.length) {
   console.log(`\nScreen sharing will relay through ${options.turnUrls.join(', ')} if it has to.`);
 }
 
-console.log(`\nControl: ${options.controlMode === 'host' ? 'only you' : 'either of you'} can play, pause and seek.`);
-console.log(
-  options.libraryMode === 'shared'
-    ? 'Library: she can browse your files too.'
-    : 'Library: only you can see the file list; she sees only what is playing.'
-);
+if (roots.length) {
+  console.log(`\nControl: ${options.controlMode === 'host' ? 'only you' : 'either of you'} can play, pause and seek.`);
+  console.log(
+    options.libraryMode === 'shared'
+      ? 'Library: they can browse your files too.'
+      : 'Library: only you can see the file list; they see only what is playing.'
+  );
+}
 console.log(
   options.keepPasscodes || resumed
     ? `Passcodes are the saved ones, from ${CONFIG_PATH}.`
@@ -476,7 +491,32 @@ if (hostname && !options.tunnelName && options.tunnel) {
       '(as a service, say), add --no-tunnel so two tunnels do not fight.'
   );
 }
-console.log('Press Ctrl+C to stop. Closing this window takes the link down.\n');
+console.log('Press Ctrl+C to stop. Closing this window takes the link down.');
+
+// The point of all the above is one action, so end on it rather than on a
+// paragraph about passcodes.
+console.log(`\n${'═'.repeat(62)}`);
+if (tunnelProblem) {
+  // The link above would show them Cloudflare's error page. Say so, loudly,
+  // rather than let it be discovered from the other side of the world.
+  console.log('  NOT READY — the link above will not work for them yet.');
+  console.log(`\n  ${tunnelProblem}`);
+  console.log('  Check with:  node bin/stream.js --check');
+  console.log('  Then close this window and start again.');
+} else if (remote) {
+  // Files: open the local address, for the reason given above. Screen only:
+  // the same link as theirs, which is one less thing to remember.
+  const yours = roots.length ? localBase : base;
+  console.log('  READY. Send them the link and passcode above.');
+  console.log(`\n  Then on THIS laptop open  ${yours}`);
+  console.log(`  sign in with  ${hostPasscode}  and click "Share screen".`);
+  console.log('\n  Pick "Entire Screen" and tick "Share system audio" —');
+  console.log('  that tickbox is the only way the sound travels.');
+} else {
+  console.log('  READY, but there is no public link — only this network.');
+  console.log(`\n  Open  ${localBase}  and click "Share screen".`);
+}
+console.log(`${'═'.repeat(62)}\n`);
 
 // cloudflared exiting is invisible from here otherwise: the room keeps serving
 // on localhost while the public address returns Cloudflare error 1033.

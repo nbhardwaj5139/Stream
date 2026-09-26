@@ -175,3 +175,23 @@ test('ingress parsing copes with quotes, comments and several hostnames', () => 
   assert.deepEqual(parseIngressHostnames('tunnel: x\ningress:\n  - service: http_status:404\n'), []);
   assert.deepEqual(parseIngressHostnames(''), []);
 });
+
+test('the tunnel name is read back from the config setup-tunnel writes', async () => {
+  const { buildConfigYaml, parseTunnelName, parseIngressHostnames } = await import('../src/cloudflare.js');
+  // Round trip through the real writer, so a change to one breaks the other.
+  const yaml = buildConfigYaml({ tunnelName: 'home', tunnelId: 'abc-123', hostname: 'stream.example.com', port: 8420 });
+
+  assert.equal(parseTunnelName(yaml), 'home');
+  assert.deepEqual(parseIngressHostnames(yaml), ['stream.example.com']);
+});
+
+test('a tunnel name is found however cloudflared config spells it', async () => {
+  const { parseTunnelName } = await import('../src/cloudflare.js');
+  assert.equal(parseTunnelName('tunnel: "movies"\n'), 'movies');
+  assert.equal(parseTunnelName("tunnel: 'movies'  # the laptop\n"), 'movies');
+  assert.equal(parseTunnelName('credentials-file: x.json\ntunnel: 6ff42ae2-765d-4adf\n'), '6ff42ae2-765d-4adf');
+  // Absent, empty or garbage: nothing, never a guess.
+  assert.equal(parseTunnelName('ingress:\n  - service: http_status:404\n'), null);
+  assert.equal(parseTunnelName(''), null);
+  assert.equal(parseTunnelName(undefined), null);
+});

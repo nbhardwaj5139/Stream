@@ -221,3 +221,19 @@ export function readIngressHostnames(file = configPath()) {
     return [];
   }
 }
+
+// The tunnel cloudflared is configured to run. With the hostname above, it is
+// everything needed to start the room on a laptop that has been set up but
+// never told — so a double-click works the first time, not the second.
+export function parseTunnelName(yaml) {
+  const match = /^\s*tunnel:\s*["']?([^"'\s#]+)/m.exec(yaml ?? '');
+  return match ? match[1] : null;
+}
+
+export function readTunnelName(file = configPath()) {
+  try {
+    return parseTunnelName(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}

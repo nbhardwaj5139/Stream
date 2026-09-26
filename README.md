@@ -58,10 +58,18 @@ cd Stream
 node bin/stream.js "D:\Movies"
 ```
 
-After the first run it remembers the folder and the address, so from then on
-you can just double-click `start.cmd` (or run `start.sh` on macOS/Linux). Both
-work from any directory — they find the project themselves, which `node
-bin/stream.js` cannot do if you are not already inside the folder.
+After that, **double-click `start.cmd`** (or run `start.sh` on macOS/Linux).
+It finds the project wherever it lives, pulls the latest version, and starts
+the room — ending on a banner that says **READY** once the tunnel has really
+connected, or **NOT READY** and why if it has not, so a broken link is caught
+on your side rather than theirs.
+
+No folder is needed. Screen sharing carries anything you can play, so on a
+machine with no films on it, it simply starts in screen-sharing mode. If you do
+want files, it looks for a `Videos\Movies` folder on any drive, then any
+film-like folder under `Videos` or `Movies`, and never `Downloads`. On a laptop
+that has been through `setup-tunnel.js`, it picks up that tunnel and hostname
+by itself, so the first double-click works as well as the hundredth.
 
 Keep your laptop awake and the terminal open. When you press Ctrl+C the link
 stops working.
