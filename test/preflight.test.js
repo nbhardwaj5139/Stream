@@ -47,9 +47,9 @@ test('a folder that is not there is fatal, and says which', async () => {
   assert.doesNotMatch(find(report, 'Folders').detail, /\/films/);
 });
 
-test('having no folders is fine, because screen sharing needs none', async () => {
+test('having no folders is the normal case, because screen sharing needs none', async () => {
   const report = await preflight({ roots: [] }, stubs());
-  assert.equal(find(report, 'Folders').status, 'warn');
+  assert.equal(find(report, 'Folders').status, 'ok', 'not even a warning');
   assert.equal(report.ok, true);
 });
 

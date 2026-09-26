@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from '../src/server.js';
 import { generatePasscode, generateToken, shouldReusePasscodes } from '../src/auth.js';
 import { hasCloudflared, startTunnel, startNamedTunnel } from '../src/tunnel.js';
-import { describeProblem, discoverMediaRoots, resolveRoots } from '../src/roots.js';
+import { describeProblem, resolveRoots } from '../src/roots.js';
 import { readIngressHostnames, readTunnelName } from '../src/cloudflare.js';
 import { formatPreflight, preflight } from '../src/preflight.js';
 
@@ -184,14 +184,10 @@ const resumed = reusePasscodes && !options.keepPasscodes;
 
 const saved = reusePasscodes ? stored : { lastRun };
 
-// Nothing passed? Do what we did last time rather than guessing at ~/Videos.
+// Nothing passed? Use last time's address. Folders are never remembered or
+// looked for: screen sharing needs none, and a remembered folder that has
+// since been renamed or unplugged is one more way for a double-click to fail.
 let reusing = false;
-let dirsRemembered = false;
-if (options.dirs.length === 0 && Array.isArray(lastRun.dirs) && lastRun.dirs.length) {
-  options.dirs = lastRun.dirs;
-  reusing = true;
-  dirsRemembered = true;
-}
 if (!options.hostname && lastRun.hostname) {
   options.hostname = lastRun.hostname;
   reusing = true;
@@ -215,35 +211,10 @@ if (options.tunnel && !options.tunnelName && !options.hostname) {
   }
 }
 
-// Asynchronous and time-limited, so a network drive that is out of reach
-// cannot freeze the start. Said out loud, so a pause never looks like a hang.
-const discover = () => {
-  console.log('Looking for a movie folder...');
-  return discoverMediaRoots({
-    homedir: os.homedir(),
-    readdir: (dir) => fs.promises.readdir(dir),
-    stat: (target) => fs.promises.stat(target),
-  });
-};
-
-let { roots, problems } = resolveRoots(options.dirs.length ? options.dirs : await discover(), {
+const { roots, problems } = resolveRoots(options.dirs, {
   homedir: os.homedir(),
   stat: fs.statSync,
 });
-
-// A folder remembered from last time that has since been renamed, moved or
-// unplugged is not a mistake in this command, and must not stop a
-// double-click from starting. Keep whichever remembered folders still exist;
-// if none do, look again as if this were a fresh laptop.
-if (dirsRemembered && problems.length) {
-  for (const problem of problems) console.log(`The folder from last time is gone: ${problem.path}`);
-  if (roots.length === 0) {
-    ({ roots, problems } = resolveRoots(await discover(), { homedir: os.homedir(), stat: fs.statSync }));
-    if (roots.length) console.log(`Using ${roots.join(', ')} instead.`);
-  } else {
-    problems = [];
-  }
-}
 
 if (problems.length) {
   for (const problem of problems) console.error(describeProblem(problem));
@@ -297,7 +268,7 @@ if (options.check) {
   process.exit(report.ok ? 0 : 1);
 }
 
-if (reusing) console.log('Using the folder and address from last time.');
+if (reusing) console.log('Using the address from last time.');
 if (options.turnUrls.length) console.log(`Relay: ${options.turnUrls.join(', ')}`);
 
 const hostPasscode = options.hostPasscode ?? saved.hostPasscode ?? generatePasscode();
@@ -322,7 +293,6 @@ saveConfig({
   guestPasscode,
   sessionSecret,
   lastRun: {
-    dirs: roots,
     port: options.port,
     hostname: configuredHostname,
     tunnelName: options.tunnelName ?? null,
@@ -335,7 +305,7 @@ saveConfig({
   },
 });
 
-console.log('Scanning for video files...');
+if (roots.length) console.log('Scanning for video files...');
 const server = await createServer({
   roots,
   hostPasscode,
@@ -372,11 +342,7 @@ if (roots.some((root) => root === appDirectory)) {
 
 const count = server.library.items.size;
 if (roots.length === 0) {
-  // Not a problem: screen sharing carries anything, and needs no folder. Only
-  // the file list is unavailable, and most evenings never open it.
-  console.log('No movie folder, so this is screen sharing only.');
-  console.log('  Play the film in VLC or anything else and share your screen.');
-  console.log('  To serve files as well, pass a folder: node bin/stream.js "D:\\Movies"');
+  console.log('Screen sharing: play the film in anything and share your screen.');
 } else {
   console.log(`Found ${count} video file${count === 1 ? '' : 's'} in:`);
   for (const root of roots) console.log(`  ${root}`);

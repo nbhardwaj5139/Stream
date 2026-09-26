@@ -27,7 +27,8 @@ export function probePort(port, host = '0.0.0.0') {
 }
 
 async function checkFolders(roots, { statDir }) {
-  if (!roots.length) return [warn('Folders', 'Nothing to share — screen sharing will still work.')];
+  // The normal case now: screen sharing needs no folder.
+  if (!roots.length) return [ok('Folders', 'None — screen sharing only.')];
 
   const missing = [];
   for (const dir of roots) {

@@ -64,12 +64,11 @@ the room — ending on a banner that says **READY** once the tunnel has really
 connected, or **NOT READY** and why if it has not, so a broken link is caught
 on your side rather than theirs.
 
-No folder is needed. Screen sharing carries anything you can play, so on a
-machine with no films on it, it simply starts in screen-sharing mode. If you do
-want files, it looks for a `Videos\Movies` folder on any drive, then any
-film-like folder under `Videos` or `Movies`, and never `Downloads`. On a laptop
-that has been through `setup-tunnel.js`, it picks up that tunnel and hostname
-by itself, so the first double-click works as well as the hundredth.
+No folder is needed and none is looked for: screen sharing carries anything
+you can play. To serve files from disk as well, pass a folder each time —
+`node bin/stream.js "D:\Movies"`. On a laptop that has been through
+`setup-tunnel.js`, it picks up that tunnel and hostname by itself, so the
+first double-click works as well as the hundredth.
 
 Keep your laptop awake and the terminal open. When you press Ctrl+C the link
 stops working.
