@@ -23,6 +23,49 @@ import {
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const START_CMD = path.join(ROOT, 'start.cmd');
 const WINDOWS = process.platform === 'win32';
+// Answers from a previous run, so running this again asks nothing it has
+// already been told. Its own file: the room rewrites its config wholesale.
+const ANSWERS_PATH = path.join(os.homedir(), '.stream-install.json');
+// Asks for the web address again even though one is set up.
+const CHANGE_ADDRESS = process.argv.includes('--change-address');
+
+function loadAnswers() {
+  try {
+    return JSON.parse(fs.readFileSync(ANSWERS_PATH, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveAnswers(update) {
+  try {
+    fs.writeFileSync(ANSWERS_PATH, JSON.stringify({ ...loadAnswers(), ...update }, null, 2));
+  } catch {
+    /* it will ask again next time, which is the lesser problem */
+  }
+}
+
+// Whether Windows already keeps this laptop awake on the charger.
+function neverSleepsOnCharger() {
+  try {
+    const out = execFileSync('powercfg', ['/query', 'SCHEME_CURRENT', 'SUB_SLEEP', 'STANDBYIDLE'], { encoding: 'utf8' });
+    const match = /AC Power Setting Index:\s*0x([0-9a-f]+)/i.exec(out);
+    return match ? parseInt(match[1], 16) === 0 : false;
+  } catch {
+    return false;
+  }
+}
+
+// Whether the room is already running here: starting a second one would only
+// fail, with the port in use, in a window of its own.
+async function roomIsRunning() {
+  try {
+    const response = await fetch('http://127.0.0.1:8420/healthz', { signal: AbortSignal.timeout(1500) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
 
 // Where cloudflared's installer puts it, for the case where it has not added
 // itself to PATH yet.
@@ -114,7 +157,9 @@ if (isLoggedIn()) {
 
 step(3, 'The web address');
 const suggested = defaultHostname(readIngressHostnames());
-let hostname = null;
+// Already set up: use it, rather than ask a question whose answer is known.
+let hostname = suggested && isValidHostname(suggested) && !CHANGE_ADDRESS ? suggested : null;
+if (hostname) say(`Already set up: ${hostname}`);
 while (!hostname) {
   const typed = cleanHostname(
     await ask(
@@ -147,20 +192,29 @@ if (WINDOWS) {
 
   fs.mkdirSync(desktop, { recursive: true });
   fs.writeFileSync(path.join(desktop, 'Start Stream.cmd'), launcherScript(START_CMD));
-  say(`On the desktop: Start Stream`);
+  say('On the desktop: Start Stream');
+  say(`  (${path.join(desktop, 'Start Stream.cmd')})`);
+  say(`  Or press the Windows key and type Start Stream, or open ${START_CMD}`);
 
   fs.mkdirSync(startup, { recursive: true });
   fs.writeFileSync(path.join(startup, 'Start Stream.cmd'), launcherScript(START_CMD, { minimised: true }));
   say('And it will start by itself, minimised, whenever you log in.');
 
   // A sleeping laptop takes the site down with it. Changing that is the
-  // owner's call, so ask.
-  const awake = await ask('Keep this laptop awake while it is on the charger, so the site stays up? [Y/n]: ');
-  if (!/^n/i.test(awake)) {
-    run('powercfg', ['/change', 'standby-timeout-ac', '0']);
-    say('It will stay awake on the charger. On battery nothing changes.');
+  // owner's call, so ask — once.
+  if (neverSleepsOnCharger()) {
+    say('It already stays awake on the charger.');
+  } else if (loadAnswers().awakeAnswered) {
+    say('Sleep settings left as you chose last time.');
   } else {
-    say('Sleep settings left as they were.');
+    const awake = await ask('Keep this laptop awake while it is on the charger, so the site stays up? [Y/n]: ');
+    saveAnswers({ awakeAnswered: true });
+    if (!/^n/i.test(awake)) {
+      run('powercfg', ['/change', 'standby-timeout-ac', '0']);
+      say('It will stay awake on the charger. On battery nothing changes.');
+    } else {
+      say('Sleep settings left as they were.');
+    }
   }
 } else {
   say('Not Windows: run start.sh to start the room.');
@@ -170,7 +224,9 @@ doneAsking();
 // ------------------------------------------------------------------- start --
 
 step(5, 'Starting the room');
-if (WINDOWS) {
+if (await roomIsRunning()) {
+  say('It is already running, so there is nothing to start.');
+} else if (WINDOWS) {
   // Its own window, so closing this one does not take the room with it.
   // Verbatim, because `start` treats its first quoted argument as the
   // window title and Node would otherwise decide the quoting itself.
@@ -182,4 +238,4 @@ if (WINDOWS) {
   say('It is starting in its own window. Leave that window open.');
 }
 say(`When it says READY, open https://${hostname}, sign in, and press Share screen.`);
-console.log('\nAll done.\n');
+console.log('\nAll done. From now on, use Start Stream — this installer is only for setting up.\n');

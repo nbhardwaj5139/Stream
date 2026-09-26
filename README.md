@@ -43,12 +43,19 @@ running it again is always safe:
 2. installs cloudflared if it is missing
 3. opens a browser to log in to Cloudflare — pick your domain
 4. asks which address to use (e.g. `movies.example.com` — type it and press
-   Enter; next time it suggests the one it has), and sets up a tunnel for it
-   named after this computer, so two laptops never share one
+   Enter), and sets up a tunnel for it named after this computer, so two
+   laptops never share one. Run again, it uses the address it already has
+   without asking; `node bin\install.js --change-address` asks again
 5. puts a **Start Stream** button on the desktop, and makes it start by itself,
    minimised, whenever you log in
 6. asks whether to keep the laptop awake while it is on the charger — a
-   sleeping laptop takes the site down with it
+   sleeping laptop takes the site down with it. Only once, and not at all if
+   Windows already keeps it awake
+7. starts the room, unless it is already running
+
+After that the installer has done its job: **use Start Stream**, not the
+installer, from then on. Press the Windows key and type *Start Stream* if it
+is not obvious on the desktop, or open `start.cmd` in the project folder.
 
 Your domain has to be on Cloudflare. Setting up a second laptop moves the
 address to it; the first one stops answering.
