@@ -109,8 +109,18 @@ try {
   check('muted, so the film is not heard twice', preview.muted);
   check('with a small strip saying it is live', preview.strip);
   await host.click('#btn-share-view');
-  check('the note and look are a button away',
-    await host.evaluate(() => !document.querySelector('#tonight').hidden && document.querySelector('#video').hidden));
+  const both = await host.evaluate(() => {
+    const video = document.querySelector('#video');
+    const panel = document.querySelector('#placeholder').getBoundingClientRect();
+    return {
+      options: !document.querySelector('#tonight').hidden,
+      preview: !video.hidden,
+      // The panel leaves most of the preview uncovered.
+      uncovered: 1 - panel.width / video.getBoundingClientRect().width,
+    };
+  });
+  check('the note and look are a button away', both.options);
+  check('and open beside the preview, not over it', both.preview && both.uncovered > 0.5, JSON.stringify(both));
   await host.click('#btn-share-view');
   check('and back to the preview', await host.evaluate(() => !document.querySelector('#video').hidden));
 

@@ -150,6 +150,26 @@ button, input, select { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .share-strip-button:hover { background: rgba(255, 255, 255, .22); }
+
+/* The host's options while sharing: a panel down the right, with the
+   preview still in view beside it. */
+.placeholder[data-floating] {
+  inset: 60px 12px 12px auto;
+  width: min(420px, calc(100% - 24px));
+  z-index: 2;
+  padding: 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: rgba(12, 13, 18, .9);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+}
+[data-theme="cozy"] .placeholder[data-floating] { background: rgba(30, 14, 22, .9); }
+.placeholder[data-floating] .placeholder-inner { margin: 0 auto auto; }
+.placeholder[data-floating] :is(.placeholder-icon, .cozy) { display: none; }
+.placeholder[data-floating] h1 { margin-top: 0; }
+.placeholder[data-floating] .tonight { margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .share-dot { animation: none; }
 }

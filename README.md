@@ -98,8 +98,12 @@ While you share, your page shows a live preview of exactly what they are
 getting, with a small *Live* strip in the corner saying who is watching. The
 preview is muted, so you do not hear the film twice. It shows itself inside
 itself, like a hall of mirrors, while this window is on the screen you are
-sharing; that is normal, and not what they see. *Note & look* on the strip
-brings the box above back if you want to change something mid-film.
+sharing; that is normal, and not what they see — it goes as soon as the film
+is full screen in your player. *Note & look* on the strip opens the box above
+as a panel beside the preview, if you want to change something mid-film.
+
+Chrome puts a "…is sharing your screen" bar at the bottom of the screen. Click
+*Hide* on it, or it sits over the bottom of their picture all evening.
 
 The handwriting is Dancing Script, bundled so it looks the same on every
 device, under the SIL Open Font License (`licenses/dancing-script-OFL.txt`).

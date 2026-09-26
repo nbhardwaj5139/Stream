@@ -692,22 +692,29 @@ function renderSharingCard() {
   const watching = listNames(others(), ['is watching', 'are watching']) || 'Nobody has joined yet';
   dom.shareStrip.hidden = false;
   dom.shareStripText.textContent = `Live · ${watching}`;
-  dom.btnShareView.textContent = state.shareView === 'card' ? 'Back to preview' : 'Note & look';
+  dom.btnShareView.textContent = state.shareView === 'card' ? 'Close' : 'Note & look';
 
-  if (state.shareView !== 'card' && screenShare.stream) {
+  // The preview is always up while there is one; the options, when asked
+  // for, sit beside it in a panel rather than in front of it.
+  const preview = Boolean(screenShare.stream);
+  if (preview) {
     if (dom.video.srcObject !== screenShare.stream) {
       dom.video.srcObject = screenShare.stream;
     }
     dom.video.muted = true;
     dom.video.controls = false;
     dom.video.hidden = false;
-    dom.placeholder.hidden = true;
     dom.video.play().catch(() => {});
+  } else {
+    dom.video.hidden = true;
+  }
+  if (state.shareView !== 'card' && preview) {
+    dom.placeholder.hidden = true;
     return;
   }
 
-  dom.video.hidden = true;
   dom.placeholder.hidden = false;
+  dom.placeholder.toggleAttribute('data-floating', preview);
   dom.tonight.hidden = false;
 
   dom.placeholderTitle.classList.remove('love');
@@ -724,6 +731,7 @@ function renderSharingCard() {
 function renderWaiting() {
   dom.video.hidden = true;
   dom.placeholder.hidden = false;
+  dom.placeholder.removeAttribute('data-floating');
   dom.shareStrip.hidden = true;
 
   dom.tonight.hidden = state.role !== 'host';
