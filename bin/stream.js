@@ -271,6 +271,11 @@ saveConfig({
     hostname: configuredHostname,
     tunnelName: options.tunnelName ?? null,
     startedAt: Date.now(),
+    // Set from the host's own page: the heading on the passcode page, and the
+    // message revealed to them once they are in. Kept only on this laptop.
+    roomName: options.roomName ?? lastRun.roomName ?? null,
+    surprise: lastRun.surprise ?? '',
+    theme: lastRun.theme ?? 'classic',
     // Kept in this file, which is owner-only. Set STREAM_TURN_PASS instead if
     // you would rather it never touched the disk.
     turn: options.turnUrls.length
@@ -283,7 +288,15 @@ const server = await createServer({
   hostPasscode,
   guestPasscode,
   sessionSecret,
-  ...(options.roomName ? { roomName: options.roomName } : {}),
+  ...(options.roomName ?? lastRun.roomName ? { roomName: options.roomName ?? lastRun.roomName } : {}),
+  surprise: lastRun.surprise ?? '',
+  theme: lastRun.theme ?? 'classic',
+  // Kept for next time. Read fresh and written whole, so nothing else in the
+  // file — the passcodes, the relay — is lost in the process.
+  onSettingsChange: ({ roomName, surprise, theme }) => {
+    const current = loadConfig();
+    saveConfig({ ...current, lastRun: { ...(current.lastRun ?? {}), roomName, surprise, theme } });
+  },
   shareHeight: options.shareHeight,
   iceServers: options.turnUrls.length
     ? [

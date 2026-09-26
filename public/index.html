@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{{THEME}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#08090d">
+<meta name="theme-color" content="{{THEME_COLOR}}">
 <meta name="color-scheme" content="dark">
 <title>{{ROOM_NAME}}</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%235b8cff%27/%3E%3Cpath d=%27M12.5 9.8v12.4L23 16z%27 fill=%27%23fff%27/%3E%3C/svg%3E">
@@ -18,15 +18,20 @@
 <body>
 
   <div class="gate" id="gate">
+    <div class="cozy" aria-hidden="true">
+      <div class="cozy-lights"></div>
+      <div class="cozy-hearts"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    </div>
     <main class="card">
       <div class="card-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+        <svg class="icon-classic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
              stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="11" width="18" height="10" rx="2.5"/>
           <path d="M7.5 11V7.5a4.5 4.5 0 0 1 9 0V11"/>
         </svg>
+        <svg class="icon-heart" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
       </div>
-      <h1>{{ROOM_NAME}}</h1>
+      <h1 class="love">{{ROOM_NAME}}</h1>
       <p>Enter the passcode you were sent.</p>
 
       <form id="join-form" autocomplete="off">
@@ -58,17 +63,42 @@
       <video id="video" playsinline controls preload="auto"></video>
 
       <div id="placeholder" class="placeholder">
+        <div class="cozy" aria-hidden="true">
+      <div class="cozy-lights"></div>
+      <div class="cozy-hearts"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    </div>
         <div class="placeholder-inner">
           <div class="placeholder-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+            <svg class="icon-classic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                  stroke-linecap="round" stroke-linejoin="round">
               <rect x="2" y="4" width="20" height="16" rx="2.5"/>
               <path d="M10 9.5v5l4-2.5z" fill="currentColor" stroke="none"/>
             </svg>
+            <svg class="icon-heart" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
           </div>
           <h1 id="placeholder-title">Waiting to start</h1>
           <p id="placeholder-text">The screen will appear here by itself as soon as it is shared.</p>
           <p id="placeholder-hint" class="hint-line"></p>
+
+          <form id="tonight" class="tonight" autocomplete="off" hidden>
+            <div class="tonight-choice" role="radiogroup" aria-label="Look of the room">
+              <label><input type="radio" name="theme" value="cozy"><span>Cozy 💕</span></label>
+              <label><input type="radio" name="theme" value="classic"><span>Classic</span></label>
+            </div>
+            <label class="field">
+              <span>💌 A surprise, revealed the moment they sign in</span>
+              <textarea id="surprise-input" rows="3" maxlength="500"
+                        placeholder="Write something only they will see…"></textarea>
+            </label>
+            <label class="field">
+              <span>Heading on the passcode page <em>— anyone with the link sees this</em></span>
+              <input id="heading-input" type="text" maxlength="80" placeholder="Tonight at the pictures">
+            </label>
+            <div class="tonight-actions">
+              <span id="tonight-status" class="tonight-status" role="status"></span>
+              <button id="tonight-save" class="button primary" type="submit">Save</button>
+            </div>
+          </form>
         </div>
       </div>
 
@@ -161,6 +191,18 @@
       <button class="button primary" type="submit">Send</button>
     </form>
   </aside>
+
+  <div class="reveal" id="reveal" hidden>
+    <div class="reveal-hearts" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span>
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
+    <div class="reveal-card" role="dialog" aria-modal="true" aria-labelledby="reveal-text">
+      <button class="icon-button reveal-x" id="reveal-x" type="button" aria-label="Close">×</button>
+      <p class="reveal-kicker">A message for you</p>
+      <p class="reveal-text love" id="reveal-text"></p>
+    </div>
+  </div>
 
   <div class="toast" id="toast" hidden></div>
 </div>

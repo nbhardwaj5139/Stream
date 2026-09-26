@@ -392,3 +392,158 @@ test('WebRTC signalling reaches the named peer and nobody else', async () => {
   guest.close();
 });
 
+
+// ------------------------------------------------------------ the surprise --
+
+async function post(base, cookie, body) {
+  const response = await fetch(`${base}/api/settings`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json().catch(() => ({})) };
+}
+
+test('the surprise is revealed to the guest on arrival, and only to the guest', async () => {
+  const saved = [];
+  const room = await freshRoom({ onSettingsChange: (settings) => saved.push(settings) });
+  const base = `http://127.0.0.1:${room.server.address().port}`;
+  const hostCookie = await joinFor(HOST_PASSCODE, base);
+
+  const set = await post(base, hostCookie, { surprise: 'A little note for tonight ❤️' });
+  assert.equal(set.status, 200);
+  assert.equal(saved.at(-1).surprise, 'A little note for tonight ❤️', 'kept for next time');
+
+  const guest = await room.join(GUEST_PASSCODE);
+  assert.equal((await guest.next('welcome')).surprise, 'A little note for tonight ❤️');
+
+  // The host wrote it; it is not sprung on them.
+  const host = await room.join(HOST_PASSCODE);
+  assert.equal((await host.next('welcome')).surprise, undefined);
+
+  // Never in the page itself, which anybody with the link can load.
+  const page = await (await fetch(`${base}/`)).text();
+  assert.doesNotMatch(page, /little note/);
+
+  guest.close();
+  host.close();
+  await room.close();
+});
+
+test('a new surprise is revealed to a guest who is already here', async () => {
+  const room = await freshRoom();
+  const base = `http://127.0.0.1:${room.server.address().port}`;
+  const hostCookie = await joinFor(HOST_PASSCODE, base);
+  const guest = await room.join(GUEST_PASSCODE);
+  const host = await room.join(HOST_PASSCODE);
+  await Promise.all([guest.next('welcome'), host.next('welcome')]);
+
+  await post(base, hostCookie, { surprise: 'Look up 🙂' });
+  assert.equal((await guest.next('surprise')).text, 'Look up 🙂');
+
+  // Saving the same words again is not a new surprise.
+  await post(base, hostCookie, { surprise: 'Look up 🙂' });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(guest.received.filter((m) => m.type === 'surprise').length, 1);
+  assert.ok(!host.received.some((m) => m.type === 'surprise'), 'not to the host');
+
+  guest.close();
+  host.close();
+  await room.close();
+});
+
+test('only the host can write the heading or the surprise, or read them back', async () => {
+  const room = await freshRoom();
+  const base = `http://127.0.0.1:${room.server.address().port}`;
+  const guestCookie = await joinFor(GUEST_PASSCODE, base);
+
+  assert.equal((await post(base, guestCookie, { surprise: 'hijacked' })).status, 403);
+  assert.equal((await post(base, guestCookie, { roomName: 'hijacked' })).status, 403);
+  const read = await fetch(`${base}/api/settings`, { headers: { cookie: guestCookie } });
+  assert.equal(read.status, 403);
+  assert.equal((await fetch(`${base}/api/settings`)).status, 401, 'and nobody signed out at all');
+
+  await room.close();
+});
+
+test('the heading is changed from the page, escaped, and shown to everyone', async () => {
+  const room = await freshRoom();
+  const base = `http://127.0.0.1:${room.server.address().port}`;
+  const hostCookie = await joinFor(HOST_PASSCODE, base);
+  const guest = await room.join(GUEST_PASSCODE);
+  await guest.next('welcome');
+
+  const set = await post(base, hostCookie, { roomName: 'Movie night <3 & popcorn' });
+  assert.equal(set.body.roomName, 'Movie night <3 & popcorn');
+  assert.equal((await guest.next('room-name')).name, 'Movie night <3 & popcorn');
+
+  const page = await (await fetch(`${base}/`)).text();
+  assert.match(page, /Movie night &lt;3 &amp; popcorn/);
+  assert.doesNotMatch(page, /<3 &/, 'never injected raw');
+
+  // Emptied, it goes back to the default rather than a blank heading.
+  assert.equal((await post(base, hostCookie, { roomName: '   ' })).body.roomName, 'Tonight at the pictures');
+
+  guest.close();
+  await room.close();
+});
+
+test('the surprise keeps its line breaks and is held to a length', async () => {
+  const room = await freshRoom();
+  const base = `http://127.0.0.1:${room.server.address().port}`;
+  const hostCookie = await joinFor(HOST_PASSCODE, base);
+
+  const kept = await post(base, hostCookie, { surprise: '  Line one\r\n\r\n\r\n\r\nLine two  ' });
+  assert.equal(kept.body.surprise, 'Line one\n\nLine two', 'a note keeps its shape, without runs of blank lines');
+  const long = await post(base, hostCookie, { surprise: '❤️'.repeat(400) });
+  assert.ok(long.body.surprise.length <= 500);
+  assert.doesNotMatch(long.body.surprise, /[\uD800-\uDBFF]$/, 'and never ends in half an emoji');
+
+  await room.close();
+});
+
+test('the room is classic until the host chooses otherwise, and then for everyone', async () => {
+  const saved = [];
+  const room = await freshRoom({ onSettingsChange: (settings) => saved.push(settings) });
+  const base = `http://127.0.0.1:${room.server.address().port}`;
+
+  // Classic by default, and set in the page itself, so there is no flash of
+  // the other look before the script runs.
+  let page = await (await fetch(`${base}/`)).text();
+  assert.match(page, /<html lang="en" data-theme="classic">/);
+  assert.match(page, /name="theme-color" content="#08090d"/);
+
+  const hostCookie = await joinFor(HOST_PASSCODE, base);
+  const guest = await room.join(GUEST_PASSCODE);
+  assert.equal((await guest.next('welcome')).theme, 'classic');
+
+  assert.equal((await post(base, hostCookie, { theme: 'cozy' })).body.theme, 'cozy');
+  assert.equal((await guest.next('theme')).theme, 'cozy', 'she sees it change without reloading');
+  assert.equal(saved.at(-1).theme, 'cozy', 'and it is kept for next time');
+
+  page = await (await fetch(`${base}/`)).text();
+  assert.match(page, /data-theme="cozy"/, 'the passcode page opens in it too');
+  assert.match(page, /content="#170d12"/);
+
+  // Saving again without changing it tells nobody anything.
+  await post(base, hostCookie, { theme: 'cozy' });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(guest.received.filter((m) => m.type === 'theme').length, 1);
+
+  // Anything unexpected is classic, never injected into the page.
+  assert.equal((await post(base, hostCookie, { theme: '"><script>' })).body.theme, 'classic');
+  page = await (await fetch(`${base}/`)).text();
+  assert.doesNotMatch(page, /<script>"/);
+
+  guest.close();
+  await room.close();
+});
+
+test('a guest cannot change the look of the room', async () => {
+  const room = await freshRoom();
+  const base = `http://127.0.0.1:${room.server.address().port}`;
+  const guestCookie = await joinFor(GUEST_PASSCODE, base);
+  assert.equal((await post(base, guestCookie, { theme: 'cozy' })).status, 403);
+  assert.match(await (await fetch(`${base}/`)).text(), /data-theme="classic"/);
+  await room.close();
+});

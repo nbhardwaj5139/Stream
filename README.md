@@ -72,6 +72,29 @@ Leave that window open (minimised is fine) — closing it takes the site down.
 Each time it starts it first pulls the latest version of the project, and
 carries on with what it has if that fails.
 
+## For tonight
+
+On your own page, under *Ready when you are*, is a small box that is yours
+alone — her passcode can neither read nor change any of it:
+
+- **Cozy 💕 or Classic.** How the room looks, for both of you, from the
+  passcode page on. Cozy is warm: fairy lights, a lamp's glow, a few hearts
+  drifting, and notes written by hand. Classic is the plain one, and the
+  default. Picking one previews it on your screen; *Save* shows them.
+- **A surprise, revealed the moment they sign in.** The screen dims, your note
+  rises, and it stays until they close it with the ×. After that it stays on
+  their waiting screen until the film takes its place. Save a new one while
+  they are there and it appears for them straight away. It is never in the
+  page itself, so nobody who merely finds the link can read it.
+- **The heading on the passcode page.** This one *is* public — anyone who
+  opens the link sees it — so keep the personal things for the surprise.
+
+All three are kept on your laptop, not in this project, and are still there
+next time. Change them as often as you like.
+
+The handwriting is Dancing Script, bundled so it looks the same on every
+device, under the SIL Open Font License (`licenses/dancing-script-OFL.txt`).
+
 ## On the other side
 
 Open the link, type the passcode (capitals don't matter), and wait. The screen
@@ -176,6 +199,12 @@ Windows notifications, and as messages on the page when it does:
 The browser asks to show notifications the first time you press Share screen.
 Say yes. They appear on the screen being shared, so the other side sees them
 too.
+
+## Chat
+
+The chat panel has a row of emoji — 😂 😮 😢 ❤️ 👏 🔥 🍿 😴 — which go
+into your message where the cursor is. A message of up to three emoji and
+nothing else is shown large, the way phones show a reaction.
 
 ## The connection, in numbers
 
@@ -320,6 +349,7 @@ node test/e2e/connection.mjs  # what each side is told as connections come and g
 | `Install-Stream.cmd` | set-up, first half: Node, Git, and the project |
 | `bin/install.js` | set-up, second half: cloudflared, the address, the buttons |
 | `src/setup.js` | the set-up's decisions: tunnel names, real Desktop and Startup folders |
+| `public/styles.css` | the Classic look, with Cozy layered on top as a theme |
 | `start.cmd` / `start.sh` | the Start Stream button: update, then start |
 | `bin/stream.js` | passcodes, the tunnel, the READY banner |
 | `bin/setup-tunnel.js` | one-time wiring of a permanent address on your domain |

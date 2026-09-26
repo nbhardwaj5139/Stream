@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-import { Room } from './room.js';
+import { Room, trimToLength } from './room.js';
 import { attachWebSocketServer } from './ws.js';
 import {
   AttemptLimiter,
@@ -28,6 +28,39 @@ const COOKIE_NAME = 'stream_session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const REMEMBERED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_BODY_BYTES = 4096;
+const DEFAULT_ROOM_NAME = 'Tonight at the pictures';
+// The heading on the passcode page. Long enough for a sentence with feeling in
+// it; short enough to sit on one or two lines of a phone.
+const ROOM_NAME_MAX = 80;
+
+export function cleanRoomName(value) {
+  if (typeof value !== 'string') return DEFAULT_ROOM_NAME;
+  const cleaned = trimToLength(value.replace(/\s+/g, ' ').trim(), ROOM_NAME_MAX);
+  return cleaned || DEFAULT_ROOM_NAME;
+}
+
+// How the room looks. Classic is the plain one; cozy is warm, for an evening
+// with somebody in particular — so it is chosen, not assumed.
+export const THEMES = { classic: '#08090d', cozy: '#170d12' };
+
+export function cleanTheme(value) {
+  return Object.hasOwn(THEMES, value) ? value : 'classic';
+}
+
+// A message the host leaves for whoever signs in with the guest passcode,
+// revealed the moment they do. Line breaks are kept: it is a note, not a
+// heading. Empty means there is none.
+const SURPRISE_MAX = 500;
+
+export function cleanSurprise(value) {
+  if (typeof value !== 'string') return '';
+  const cleaned = value
+    .replace(/\r\n?/g, '\n')
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return trimToLength(cleaned, SURPRISE_MAX);
+}
 
 const STATIC_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -38,6 +71,7 @@ const STATIC_TYPES = {
   '.png': 'image/png',
   '.webmanifest': 'application/manifest+json',
   '.json': 'application/json',
+  '.woff2': 'font/woff2',
 };
 
 function escapeHtml(value) {
@@ -110,7 +144,11 @@ export async function createServer(options = {}) {
     hostPasscode,
     guestPasscode,
     sessionSecret = generateToken(32),
-    roomName = 'Tonight at the pictures',
+    roomName: initialRoomName = DEFAULT_ROOM_NAME,
+    surprise: initialSurprise = '',
+    theme: initialTheme = 'classic',
+    // Told when the host changes either, so they can be kept for next time.
+    onSettingsChange = () => {},
     // Extra ICE servers for screen sharing. Public STUN is enough for most
     // connections; a TURN relay is what gets through the ones it is not.
     iceServers = [],
@@ -134,12 +172,23 @@ export async function createServer(options = {}) {
 
   const assets = await assetVersion();
   const room = new Room();
+  // The host can change these from the page, so they live here.
+  let roomName = cleanRoomName(initialRoomName);
+  let surprise = cleanSurprise(initialSurprise);
+  let theme = cleanTheme(initialTheme);
   const connections = new Map(); // viewerId -> WebSocketConnection
 
   function broadcast(message, { except } = {}) {
     for (const [id, connection] of connections) {
       if (except && id === except) continue;
       connection.send(message);
+    }
+  }
+
+  // Only to people who came in with the guest passcode.
+  function broadcastToGuests(message) {
+    for (const [id, connection] of connections) {
+      if (room.viewers.get(id)?.role === 'guest') connection.send(message);
     }
   }
 
@@ -221,6 +270,10 @@ export async function createServer(options = {}) {
     if (extension === '.html') {
       const html = (await fsp.readFile(filePath, 'utf8'))
         .replaceAll('{{ROOM_NAME}}', escapeHtml(roomName))
+        // Set in the page itself, so the passcode page is already in the
+        // chosen look rather than flashing the other one first.
+        .replaceAll('{{THEME}}', theme)
+        .replaceAll('{{THEME_COLOR}}', THEMES[theme])
         .replaceAll('{{ASSETS}}', assets);
       res.writeHead(200, {
         'content-type': type,
@@ -297,6 +350,30 @@ export async function createServer(options = {}) {
       return;
     }
 
+    if (pathname === '/api/settings') {
+      // The heading is the first thing anybody sees and the surprise is
+      // personal, so both are the host's alone — to change, and to read back.
+      if (session.role !== 'host') {
+        sendJson(res, 403, { error: 'Only the host can change these.' });
+        return;
+      }
+      if (req.method === 'POST') {
+        const body = await readJsonBody(req);
+        if (typeof body?.roomName === 'string') roomName = cleanRoomName(body.roomName);
+        const surpriseChanged = typeof body?.surprise === 'string' && cleanSurprise(body.surprise) !== surprise;
+        if (typeof body?.surprise === 'string') surprise = cleanSurprise(body.surprise);
+        const themeChanged = typeof body?.theme === 'string' && cleanTheme(body.theme) !== theme;
+        if (typeof body?.theme === 'string') theme = cleanTheme(body.theme);
+        onSettingsChange({ roomName, surprise, theme });
+        broadcast({ type: 'room-name', name: roomName });
+        if (themeChanged) broadcast({ type: 'theme', theme });
+        // A new message is revealed to whoever is already here, too.
+        if (surpriseChanged && surprise) broadcastToGuests({ type: 'surprise', text: surprise });
+      }
+      sendJson(res, 200, { roomName, surprise, theme });
+      return;
+    }
+
     if (pathname === '/api/logout' && req.method === 'POST') {
       sendJson(res, 200, { ok: true }, {
         'set-cookie': `${COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly`,
@@ -327,6 +404,11 @@ export async function createServer(options = {}) {
       you: { id: viewer.id, name: viewer.name, role: viewer.role },
       state: room.snapshot(),
       chat: room.chat,
+      roomName,
+      theme,
+      // Revealed the moment they sign in. Never in the page itself, so nobody
+      // who merely finds the link can read it.
+      ...(viewer.role === 'guest' && surprise ? { surprise } : {}),
       capabilities: { iceServers, shareHeight },
     });
     broadcastPresence();

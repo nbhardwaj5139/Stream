@@ -38,6 +38,13 @@ const dom = {
   composer: el('composer'),
   chatInput: el('chat-input'),
   emojiRow: el('emoji-row'),
+  tonight: el('tonight'),
+  surpriseInput: el('surprise-input'),
+  headingInput: el('heading-input'),
+  tonightStatus: el('tonight-status'),
+  reveal: el('reveal'),
+  revealText: el('reveal-text'),
+  revealX: el('reveal-x'),
   toast: el('toast'),
   gate: el('gate'),
   joinForm: el('join-form'),
@@ -231,6 +238,9 @@ function handleMessage(message) {
       dom.roleBadge.hidden = false;
       dom.chat.replaceChildren();
       for (const entry of message.chat ?? []) appendChat(entry, { quiet: true });
+      if (message.theme) applyTheme(message.theme);
+      if (message.surprise) revealSurprise(message.surprise);
+      if (state.role === 'host') loadTonight();
 
       // Back after a dropped connection with the capture still running: the
       // picture may never have stopped, and nobody should have to press Share
@@ -285,6 +295,18 @@ function handleMessage(message) {
           showOverlay('Could not connect to their screen.');
         });
       }
+      break;
+
+    case 'surprise':
+      revealSurprise(message.text);
+      break;
+
+    case 'room-name':
+      document.title = message.name;
+      break;
+
+    case 'theme':
+      applyTheme(message.theme);
       break;
 
     case 'chat':
@@ -589,8 +611,10 @@ function updateSyncBadge() {
 function renderSharingCard() {
   dom.video.hidden = true;
   dom.placeholder.hidden = false;
+  dom.tonight.hidden = false;
   hideOverlay();
 
+  dom.placeholderTitle.classList.remove('love');
   dom.placeholderTitle.textContent = 'You are sharing this screen';
   dom.placeholderText.textContent =
     'Play the film however you like — everything on this monitor goes across.';
@@ -604,6 +628,8 @@ function renderWaiting() {
   dom.video.hidden = true;
   dom.placeholder.hidden = false;
 
+  dom.tonight.hidden = state.role !== 'host';
+  dom.placeholderTitle.classList.remove('love');
   if (state.role === 'host') {
     dom.placeholderTitle.textContent = 'Ready when you are';
     dom.placeholderText.textContent =
@@ -614,6 +640,7 @@ function renderWaiting() {
   }
 
   const host = state.viewers.find((viewer) => viewer.role === 'host' && viewer.id !== state.me?.id);
+  let showingNote = false;
   if (state.ended?.reason === 'stopped') {
     dom.placeholderTitle.textContent = `${state.ended.name ?? 'They'} stopped sharing`;
     dom.placeholderText.textContent = 'Their screen will appear here again the moment they share it.';
@@ -621,12 +648,20 @@ function renderWaiting() {
     dom.placeholderTitle.textContent = `Lost contact with ${state.ended.name ?? 'them'}`;
     dom.placeholderText.textContent =
       'Their screen will appear here again by itself when they are back.';
+  } else if (state.surprise) {
+    // Their note stays in front of them until the film takes its place.
+    showingNote = true;
+    dom.placeholderTitle.textContent = state.surprise;
+    dom.placeholderText.textContent = host
+      ? `${host.name} is here. The film will appear by itself when they share it.`
+      : 'The film will appear here by itself as soon as they share it.';
   } else {
     dom.placeholderTitle.textContent = 'Waiting for the film to start';
     dom.placeholderText.textContent = host
       ? `${host.name} is here. Their screen will appear by itself when they share it.`
       : 'Their screen will appear here by itself as soon as they share it.';
   }
+  dom.placeholderTitle.classList.toggle('love', showingNote);
   // The host is already named above, so only mention anyone else.
   const rest = others().filter((viewer) => viewer.id !== host?.id);
   dom.placeholderHint.textContent =
@@ -750,6 +785,100 @@ function appendChat(entry, { quiet = false } = {}) {
     toast(`${entry.name}: ${entry.text}`);
   }
 }
+
+// ------------------------------------------------------------ the surprise --
+
+// Shown over everything the moment they arrive: the screen dims and the note
+// rises, and it stays until they close it themselves — a note is not a
+// notification. That tap is also the one a browser wants before it will play
+// sound, so it earns its keep twice. Closed, it stays on their waiting screen
+// until the picture arrives.
+function revealSurprise(text) {
+  if (!text) return;
+  state.surprise = text;
+  dom.revealText.textContent = text;
+  if (!showingScreen() && !screenShare.sharing) renderWaiting();
+  // A beat after arriving, so it lands rather than flickers in with the page.
+  setTimeout(() => {
+    dom.reveal.hidden = false;
+    dom.reveal.dataset.shown = 'false';
+    requestAnimationFrame(() => { dom.reveal.dataset.shown = 'true'; });
+    dom.revealX.focus({ preventScroll: true });
+  }, 450);
+}
+
+function closeReveal() {
+  dom.reveal.dataset.shown = 'false';
+  setTimeout(() => { dom.reveal.hidden = true; }, 350);
+}
+
+dom.revealX.addEventListener('click', closeReveal);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !dom.reveal.hidden) closeReveal();
+});
+
+// The whole room changes look at once, both sides, when the host says so.
+const THEME_COLORS = { classic: '#08090d', cozy: '#170d12' };
+function applyTheme(theme) {
+  if (!THEME_COLORS[theme]) return;
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_COLORS[theme]);
+}
+
+const themeChoice = () => dom.tonight.querySelector('input[name="theme"]:checked')?.value;
+
+// The host's side: what they have left for tonight.
+async function loadTonight() {
+  try {
+    const response = await fetch('/api/settings', { credentials: 'same-origin' });
+    if (!response.ok) return;
+    const settings = await response.json();
+    const radio = dom.tonight.querySelector(`input[name="theme"][value="${settings.theme}"]`);
+    if (radio) radio.checked = true;
+    // Do not overwrite something they are in the middle of typing.
+    if (document.activeElement !== dom.surpriseInput) dom.surpriseInput.value = settings.surprise ?? '';
+    if (document.activeElement !== dom.headingInput) {
+      dom.headingInput.value = settings.roomName === 'Tonight at the pictures' ? '' : settings.roomName ?? '';
+    }
+  } catch {
+    /* the box simply starts empty */
+  }
+}
+
+// Picking one shows it straight away on the host's own screen, as a preview;
+// saving shows everyone.
+dom.tonight.addEventListener('change', (event) => {
+  if (event.target.name !== 'theme') return;
+  applyTheme(event.target.value);
+  dom.tonightStatus.textContent = 'Press Save to show them this look too.';
+});
+
+dom.tonight.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  dom.tonightStatus.textContent = 'Saving…';
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        surprise: dom.surpriseInput.value,
+        roomName: dom.headingInput.value,
+        ...(themeChoice() ? { theme: themeChoice() } : {}),
+      }),
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    const saved = await response.json();
+    const here = others().some((viewer) => viewer.role === 'guest');
+    dom.tonightStatus.textContent = saved.surprise
+      ? here
+        ? 'Saved — it is on their screen now 💌'
+        : 'Saved — they will see it the moment they sign in 💌'
+      : 'Saved.';
+  } catch {
+    dom.tonightStatus.textContent = 'Could not save. Try again.';
+  }
+});
 
 // ---------------------------------------------------------------- events --
 
