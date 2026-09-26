@@ -9,7 +9,6 @@
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
-import readline from 'node:readline/promises';
 
 import {
   backupExistingConfig,
@@ -340,9 +339,8 @@ fs.mkdirSync(cloudflaredDir(), { recursive: true });
 fs.writeFileSync(target, buildConfigYaml({ tunnelName, tunnelId: tunnel.id, hostname, port }));
 console.log(`4/4  Wrote ${target}`);
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-console.log(`\nDone. Start the room with:\n`);
-console.log(`  node bin/stream.js "YOUR\\MOVIE\\FOLDER" --tunnel-name ${tunnelName} --hostname ${hostname}\n`);
-console.log(`Then send her:  https://${hostname}`);
+// start.cmd reads the tunnel and hostname back from the config just written,
+// so there is nothing more to type.
+console.log('\nDone. Double-click start.cmd (or Start Stream) to start the room.');
+console.log(`Its address is  https://${hostname}`);
 console.log('DNS can take a minute or two the first time.\n');
-rl.close();

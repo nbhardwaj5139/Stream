@@ -119,3 +119,85 @@ export function startTunnel(port, { timeoutMs = 45_000 } = {}) {
     });
   });
 }
+
+// Keep a tunnel up for as long as the room runs.
+//
+// Started at login, the internet is often a few seconds behind Windows; left
+// running all day, a laptop sleeps, changes network, loses Wi-Fi for a minute.
+// Any of those used to leave the room serving locally while the public address
+// showed Cloudflare's error page until somebody noticed and restarted it. So:
+// if it will not start, try again; if it stops, start it again; never give up
+// while the room is running.
+const RETRY_DELAYS_MS = [2000, 5000, 10_000, 20_000, 30_000];
+
+export function superviseTunnel({
+  start,
+  onUp = () => {},
+  onDown = () => {},
+  onWaiting = () => {},
+  delays = RETRY_DELAYS_MS,
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
+  let stopped = false;
+  let current = null;
+  let resolveFirst;
+  const ready = new Promise((resolve) => {
+    resolveFirst = resolve;
+  });
+
+  (async () => {
+    let failures = 0;
+    while (!stopped) {
+      let tunnel;
+      try {
+        tunnel = await start();
+      } catch (error) {
+        if (stopped) return;
+        const delay = delays[Math.min(failures, delays.length - 1)];
+        failures += 1;
+        onWaiting(error, delay, failures);
+        await wait(delay);
+        continue;
+      }
+
+      if (stopped) {
+        tunnel.stop();
+        return;
+      }
+      failures = 0;
+      current = tunnel;
+      onUp(tunnel);
+      resolveFirst(tunnel);
+
+      const code = await new Promise((resolve) => tunnel.process.once('close', resolve));
+      current = null;
+      if (stopped) return;
+      onDown(code);
+      // A moment's pause, so a tunnel that dies the instant it starts does not
+      // spin.
+      await wait(delays[0]);
+    }
+  })();
+
+  return {
+    ready,
+    get current() {
+      return current;
+    },
+    stop() {
+      stopped = true;
+      current?.stop();
+    },
+  };
+}
+
+// cloudflared's failure is a page of timestamped log. One line of it is the
+// reason; the rest is noise to somebody glancing at a window.
+export function summariseTunnelError(error) {
+  const text = String(error?.message ?? error ?? '');
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const reason = lines.find((line) => /\bERR\b|error|failed|unable|cannot|could not/i.test(line)) ?? lines[0];
+  if (!reason) return 'no reason given';
+  // Drop the "2026-09-24T10:00:00Z ERR " prefix cloudflared puts on each line.
+  return reason.replace(/^\S*\d{4}-\d{2}-\d{2}T\S+\s+(ERR|WRN|INF)\s+/, '').slice(0, 160);
+}

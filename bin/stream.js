@@ -5,7 +5,13 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createServer } from '../src/server.js';
 import { generatePasscode, generateToken, shouldReusePasscodes } from '../src/auth.js';
-import { hasCloudflared, startTunnel, startNamedTunnel } from '../src/tunnel.js';
+import {
+  hasCloudflared,
+  startNamedTunnel,
+  startTunnel,
+  summariseTunnelError,
+  superviseTunnel,
+} from '../src/tunnel.js';
 import { describeProblem, resolveRoots } from '../src/roots.js';
 import { readIngressHostnames, readTunnelName } from '../src/cloudflare.js';
 import { formatPreflight, preflight } from '../src/preflight.js';
@@ -383,35 +389,47 @@ if (options.tunnelName) {
 }
 
 let tunnel = null;
+let supervisor = null;
 // Why the public link is not up, if it is not. Anything here means READY
 // would be a lie, and the banner has to say so instead.
 let tunnelProblem = null;
+// Set once the READY banner has been shown, so a reconnection later can say
+// so briefly rather than printing everything again.
+let announced = false;
 if (options.tunnel) {
   if (await hasCloudflared()) {
-    if (options.tunnelName) {
-      process.stdout.write(`\nConnecting tunnel "${options.tunnelName}"... `);
-      try {
-        tunnel = await startNamedTunnel(options.tunnelName);
-        console.log('done');
-        if (!hostname) {
-          console.log(
-            '  Note: pass --hostname so the link printed below is the right one.\n' +
-              '  The tunnel routes whatever hostname its config file says.'
-          );
-        }
-      } catch (error) {
-        console.log(`failed (${error.message})`);
-        tunnelProblem = `The tunnel "${options.tunnelName}" did not connect.`;
-      }
-    } else {
-      process.stdout.write('\nStarting public link... ');
-      try {
-        tunnel = await startTunnel(options.port);
-        console.log('done');
-      } catch (error) {
-        console.log(`failed (${error.message})`);
-        tunnelProblem = 'The public link could not be created.';
-      }
+    const label = options.tunnelName ? `the tunnel "${options.tunnelName}"` : 'a public link';
+    console.log(`\nConnecting ${label}...`);
+
+    // Never gives up: at login the internet may not be up yet, and over a day
+    // a laptop sleeps, wakes and changes network. Each of those used to leave
+    // the link down until somebody noticed.
+    supervisor = superviseTunnel({
+      start: () =>
+        options.tunnelName ? startNamedTunnel(options.tunnelName) : startTunnel(options.port),
+      onWaiting: (error, delay) => {
+        console.log(`  Not connected yet: ${summariseTunnelError(error)}`);
+        console.log(`  Trying again in ${Math.round(delay / 1000)}s. It will say READY once it is up.`);
+      },
+      onUp: (up) => {
+        tunnel = up;
+        if (!announced) return;
+        // A throwaway link gets a new address every time, so repeat it.
+        const where = options.tunnelName ? '' : ` The new link is ${up.url}`;
+        console.log(`\n  ${new Date().toLocaleTimeString()}  Reconnected — READY again.${where}\n`);
+      },
+      onDown: () => {
+        console.log(`\n  ${new Date().toLocaleTimeString()}  The connection dropped.`);
+        console.log('  Reconnecting by itself — nothing to do.');
+      },
+    });
+    tunnel = await supervisor.ready;
+    console.log('Connected.');
+    if (options.tunnelName && !hostname) {
+      console.log(
+        '  Note: pass --hostname so the link printed below is the right one.\n' +
+          '  The tunnel routes whatever hostname its config file says.'
+      );
     }
   } else {
     tunnelProblem = 'cloudflared is not installed.';
@@ -509,20 +527,13 @@ if (tunnelProblem) {
 }
 console.log(`${'═'.repeat(62)}\n`);
 
-// cloudflared exiting is invisible from here otherwise: the room keeps serving
-// on localhost while the public address returns Cloudflare error 1033.
-tunnel?.process?.on('close', (code) => {
-  if (shuttingDown) return;
-  console.log(`\n  The tunnel disconnected (cloudflared exited ${code}).`);
-  console.log(`  ${base} will show Cloudflare error 1033 until it is running again.`);
-  console.log('  Press Ctrl+C and start it again.\n');
-});
+announced = true;
 
 function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log('\nStopping...');
-  tunnel?.stop();
+  supervisor?.stop();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }

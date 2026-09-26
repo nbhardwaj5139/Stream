@@ -5,7 +5,7 @@ REM
 REM No labels or GOTOs on purpose: this file is stored with Unix line endings,
 REM and cmd.exe can fail to find a label in a file like that.
 cd /d "%~dp0"
-title Movie night
+title Stream - leave this window open
 
 REM Pull quietly, and never let a failed update stop the evening: being a day
 REM behind is a far smaller problem than not starting at all.
