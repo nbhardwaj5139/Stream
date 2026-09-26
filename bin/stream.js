@@ -186,9 +186,11 @@ const saved = reusePasscodes ? stored : { lastRun };
 
 // Nothing passed? Do what we did last time rather than guessing at ~/Videos.
 let reusing = false;
+let dirsRemembered = false;
 if (options.dirs.length === 0 && Array.isArray(lastRun.dirs) && lastRun.dirs.length) {
   options.dirs = lastRun.dirs;
   reusing = true;
+  dirsRemembered = true;
 }
 if (!options.hostname && lastRun.hostname) {
   options.hostname = lastRun.hostname;
@@ -213,12 +215,27 @@ if (options.tunnel && !options.tunnelName && !options.hostname) {
   }
 }
 
-const { roots, problems } = resolveRoots(
-  options.dirs.length
-    ? options.dirs
-    : discoverMediaRoots({ homedir: os.homedir(), readdir: fs.readdirSync, stat: fs.statSync }),
-  { homedir: os.homedir(), stat: fs.statSync }
-);
+const discover = () =>
+  discoverMediaRoots({ homedir: os.homedir(), readdir: fs.readdirSync, stat: fs.statSync });
+
+let { roots, problems } = resolveRoots(options.dirs.length ? options.dirs : discover(), {
+  homedir: os.homedir(),
+  stat: fs.statSync,
+});
+
+// A folder remembered from last time that has since been renamed, moved or
+// unplugged is not a mistake in this command, and must not stop a
+// double-click from starting. Keep whichever remembered folders still exist;
+// if none do, look again as if this were a fresh laptop.
+if (dirsRemembered && problems.length) {
+  for (const problem of problems) console.log(`The folder from last time is gone: ${problem.path}`);
+  if (roots.length === 0) {
+    ({ roots, problems } = resolveRoots(discover(), { homedir: os.homedir(), stat: fs.statSync }));
+    if (roots.length) console.log(`Using ${roots.join(', ')} instead.`);
+  } else {
+    problems = [];
+  }
+}
 
 if (problems.length) {
   for (const problem of problems) console.error(describeProblem(problem));
