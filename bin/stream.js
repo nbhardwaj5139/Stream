@@ -464,8 +464,9 @@ if (tunnelProblem) {
   console.log('  READY. Send them the link and passcode above.');
   console.log(`\n  Then on THIS laptop open  ${base}`);
   console.log(`  sign in with  ${hostPasscode}  and click "Share screen".`);
-  console.log('\n  Pick "Entire Screen" and tick "Share system audio" —');
-  console.log('  that tickbox is the only way the sound travels.');
+  console.log('\n  Film in VLC or another program: pick "Entire Screen", leave its');
+  console.log('  sound on, and put the film full screen.');
+  console.log('  Film in a Chrome tab (YouTube, an .mp4 dragged in): pick that tab.');
 } else {
   console.log('  READY, but there is no public link — only this network.');
   console.log(`\n  Open  ${localBase}  and click "Share screen".`);

@@ -713,11 +713,15 @@ function renderSharingCard() {
   const watching = listNames(others(), ['is watching', 'are watching']) || 'Nobody has joined yet';
   dom.shareStrip.hidden = false;
   dom.shareStripText.textContent = `Live · ${watching}`;
-  dom.btnShareView.textContent = state.shareView === 'card' ? 'Close' : 'Settings';
 
   // The preview is always up while there is one; the options, when asked
-  // for, sit beside it in a panel rather than in front of it.
-  const preview = Boolean(screenShare.stream);
+  // for, sit beside it in a panel rather than in front of it. The whole
+  // screen is the exception: a preview of it, looked at, is this page inside
+  // itself, so it is there only if asked for, and never behind the options.
+  const whole = screenShare.surface === 'monitor';
+  dom.btnShareView.textContent =
+    state.shareView === 'card' ? (whole ? 'Preview' : 'Close') : whole ? 'Hide preview' : 'Settings';
+  const preview = Boolean(screenShare.stream) && !(whole && state.shareView === 'card');
   if (preview) {
     if (dom.video.srcObject !== screenShare.stream) {
       dom.video.srcObject = screenShare.stream;
@@ -740,9 +744,22 @@ function renderSharingCard() {
 
   dom.placeholderTitle.classList.remove('love');
   dom.placeholderText.classList.remove('trouble');
-  dom.placeholderTitle.textContent = 'You are sharing this screen';
-  dom.placeholderText.textContent =
-    'Play the film however you like — everything on this monitor goes across.';
+  if (whole) {
+    dom.placeholderTitle.textContent = 'You are sharing your whole screen';
+    dom.placeholderText.textContent =
+      'They see exactly what is on it — right now, this page. Start the film and make it full screen.';
+  } else if (screenShare.surface === 'browser') {
+    dom.placeholderTitle.textContent = 'You are sharing a tab';
+    dom.placeholderText.textContent =
+      'They see that tab and hear its sound, and nothing else. Play the film in it however you like.';
+  } else if (screenShare.surface === 'window') {
+    dom.placeholderTitle.textContent = 'You are sharing a window';
+    dom.placeholderText.textContent =
+      'They see that window and nothing else. On Windows a window carries no sound: for sound, share a tab or Entire Screen.';
+  } else {
+    dom.placeholderTitle.textContent = 'You are sharing your screen';
+    dom.placeholderText.textContent = 'Play the film however you like.';
+  }
   dom.placeholderHint.textContent =
     listNames(others(), ['is watching.', 'are watching.']) || 'Nobody has joined yet.';
 }
@@ -761,7 +778,7 @@ function renderWaiting() {
   if (state.role === 'host') {
     dom.placeholderTitle.textContent = 'Ready when you are';
     dom.placeholderText.textContent =
-      'Press Share screen, pick Entire Screen, and tick Share system audio.';
+      'Press Share screen and pick the tab your film is in. For a film in another program, pick Entire Screen.';
     dom.placeholderHint.textContent =
       listNames(others(), ['is here.', 'are here.']) || 'Nobody else has joined yet.';
     return;
@@ -1436,11 +1453,11 @@ async function startSharing() {
   }
 
   if (!started.hasAudio) {
-    // Windows offers audio on "Entire Screen" and on a Chrome tab, but never
-    // on a single window — which is the option people reach for first.
+    // Chrome carries sound for a tab and for Entire Screen, but on Windows
+    // never for a single window — which is the option people reach for first.
     toast(
-      'Sharing without sound — the audio tick was cleared in the picker. ' +
-        'Stop, share again, and leave "Share system audio" on.',
+      'Sharing without sound. Stop, share again, and pick the film\'s tab or Entire Screen ' +
+        'with the sound switch left on. A single window carries no sound.',
       10_000
     );
   }
@@ -1449,7 +1466,7 @@ async function startSharing() {
   dom.btnShare.setAttribute('aria-pressed', 'true');
   send({ type: 'share', on: true });
 
-  state.shareView = 'preview';
+  state.shareView = screenShare.surface === 'monitor' ? 'card' : 'preview';
   renderSharingCard();
   renderTitle();
 

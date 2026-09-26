@@ -45,7 +45,11 @@ export function shareProfile(height = 1080) {
 
 function videoConstraints(profile) {
   return {
-    displaySurface: 'monitor',
+    // Open the picker on tabs. A film playing in a tab is the best thing to
+    // share: its own sound, nothing else on the screen, and a preview that is
+    // the film rather than this page inside itself. Entire Screen is still
+    // there for a film in another program.
+    displaySurface: 'browser',
     frameRate: { ideal: 30, max: 60 },
     width: { ideal: profile.width },
     height: { ideal: profile.height },
@@ -57,8 +61,9 @@ const PICKER_OPTIONS = {
   systemAudio: 'include',
   // Never offer this very tab: sharing it shows the share, inside the share.
   selfBrowserSurface: 'exclude',
-  // No "share something else instead" button mid-film.
-  surfaceSwitching: 'exclude',
+  // "Share this tab instead", for when the film is in a different tab from
+  // the one first picked.
+  surfaceSwitching: 'include',
 };
 
 // Screen capture audio is music and dialogue, so switch off everything meant
@@ -120,6 +125,12 @@ export class ScreenShare {
     return Boolean(this.stream);
   }
 
+  // What was picked: 'browser' (a tab), 'window', 'monitor' (the whole
+  // screen), or null where the browser does not say.
+  get surface() {
+    return this.stream?.getVideoTracks()[0]?.getSettings?.().displaySurface ?? null;
+  }
+
   async start() {
     // Asking for audio and video together fails outright wherever audio
     // capture is unavailable — some Linux desktops, macOS without a loopback
@@ -132,7 +143,7 @@ export class ScreenShare {
     const attempts = [
       { video: wanted, audio: AUDIO_CONSTRAINTS, ...PICKER_OPTIONS },
       { video: wanted, audio: true, ...PICKER_OPTIONS },
-      { video: { displaySurface: 'monitor' }, audio: true },
+      { video: { displaySurface: 'browser' }, audio: true },
       { video: true, audio: true },
       { video: true },
     ];

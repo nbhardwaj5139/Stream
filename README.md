@@ -16,8 +16,9 @@ on their side, no account to create.
   Then on THIS laptop open  https://movies.example.com
   sign in with  R3XB9T  and click "Share screen".
 
-  Pick "Entire Screen" and tick "Share system audio" —
-  that tickbox is the only way the sound travels.
+  Film in VLC or another program: pick "Entire Screen", leave its
+  sound on, and put the film full screen.
+  Film in a Chrome tab (YouTube, an .mp4 dragged in): pick that tab.
 ══════════════════════════════════════════════════════════════
 ```
 
@@ -64,8 +65,14 @@ job as the button.
 2. Wait for **READY** in its window. It says so only once the link actually
    works; if it cannot connect it says **NOT READY** and why, and keeps trying
    by itself — handy when Windows starts before the Wi-Fi does.
-3. Open the link, sign in with **your** passcode, press **Share screen**, pick
-   **Entire Screen**, and tick **Share system audio**.
+3. Open the link, sign in with **your** passcode and press **Share screen**.
+   - **Film in VLC, or any other program:** pick **Entire Screen**, leave
+     **Share system audio** on, then put the film full screen. They see your
+     whole screen as it is, so full screen is what keeps it to the film — and
+     your screen is your preview.
+   - **Film in a Chrome tab** (YouTube, or an .mp4 dragged into a tab): pick
+     **that tab** instead. They see and hear only that tab, and your page
+     shows a live preview of it.
 4. Send the other person the link and **their** passcode.
 
 Leave that window open (minimised is fine) — closing it takes the site down.
@@ -94,12 +101,12 @@ next time. Change them as often as you like.
 
 The note box has a row of emoji under it, like the chat does.
 
-While you share, your page shows a live preview of exactly what they are
+While you share a tab, your page shows a live preview of exactly what they are
 getting, with a small *Live* strip in the corner saying who is watching. The
-preview is muted, so you do not hear the film twice. It shows itself inside
-itself, like a hall of mirrors, while this window is on the screen you are
-sharing; that is normal, and not what they see — it goes as soon as the film
-is full screen in your player. *Settings* on the strip opens the box above
+preview is muted, so you do not hear the film twice. When you share Entire
+Screen instead, they see whatever is on your screen — this page included,
+until the film is full screen — so the page shows a plain card saying so, not
+a preview of itself inside itself. *Settings* on the strip opens the box above
 as a panel beside the preview, if you want to change something mid-film.
 
 ### Showing someone out
@@ -339,10 +346,14 @@ of a login page before the passcode.
 
 - **The laptop has to be on, awake and logged in**, with the Start Stream window
   open. Cloudflare is a front door, not a host.
-- **Sound travels only with "Entire Screen".** On Windows, Chrome offers audio
-  for Entire Screen and for a Chrome tab, never for a single window — which is
-  the option people reach for first, because it names the app. The room says so
-  if a share arrives silent.
+- **No sound from a single window.** On Windows, Chrome carries sound for
+  Entire Screen and for a Chrome tab, never for a single window — which is the
+  option people reach for first, because it names the app (VLC, say). Share
+  Entire Screen for VLC. The room says so if a share arrives silent.
+- **Sharing Entire Screen shows this page too** whenever it is in front: a
+  preview of the screen, on the screen, is a tunnel of itself. So with Entire
+  Screen your page shows a plain card instead, with *Preview* on the strip if
+  you want the tunnel anyway.
 - **Some network pairs need a relay** (see above), and without one those
   networks will not connect at all.
 - **Upload speed is the ceiling.** 1080p wants about 8 Mbps sustained.
