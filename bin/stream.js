@@ -215,10 +215,18 @@ if (options.tunnel && !options.tunnelName && !options.hostname) {
   }
 }
 
-const discover = () =>
-  discoverMediaRoots({ homedir: os.homedir(), readdir: fs.readdirSync, stat: fs.statSync });
+// Asynchronous and time-limited, so a network drive that is out of reach
+// cannot freeze the start. Said out loud, so a pause never looks like a hang.
+const discover = () => {
+  console.log('Looking for a movie folder...');
+  return discoverMediaRoots({
+    homedir: os.homedir(),
+    readdir: (dir) => fs.promises.readdir(dir),
+    stat: (target) => fs.promises.stat(target),
+  });
+};
 
-let { roots, problems } = resolveRoots(options.dirs.length ? options.dirs : discover(), {
+let { roots, problems } = resolveRoots(options.dirs.length ? options.dirs : await discover(), {
   homedir: os.homedir(),
   stat: fs.statSync,
 });
@@ -230,7 +238,7 @@ let { roots, problems } = resolveRoots(options.dirs.length ? options.dirs : disc
 if (dirsRemembered && problems.length) {
   for (const problem of problems) console.log(`The folder from last time is gone: ${problem.path}`);
   if (roots.length === 0) {
-    ({ roots, problems } = resolveRoots(discover(), { homedir: os.homedir(), stat: fs.statSync }));
+    ({ roots, problems } = resolveRoots(await discover(), { homedir: os.homedir(), stat: fs.statSync }));
     if (roots.length) console.log(`Using ${roots.join(', ')} instead.`);
   } else {
     problems = [];
