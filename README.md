@@ -31,17 +31,19 @@ Once per laptop. Download **`Install-Stream.cmd`** from this repository (open
 the file on GitHub, then *Download raw file*) and double-click it.
 
 Windows will say *"Windows protected your PC"* the first time, because the file
-came from the internet: click **More info → Run anyway**.
+came from the internet: click **More info → Run anyway**. Installing Node.js
+may also ask for permission to change the computer: say yes.
 
 It then does everything, checking first whether each step is already done, so
 running it again is always safe:
 
-1. installs whichever of Git, Node.js and cloudflared are missing
-2. downloads this project to your user folder
+1. installs whichever of Git and Node.js are missing, using Windows' own
+   installer, and downloads this project to your user folder
+2. installs cloudflared if it is missing
 3. opens a browser to log in to Cloudflare — pick your domain
-4. asks, in a normal Windows box, which address to use (e.g.
-   `movies.example.com`), and sets up a tunnel for it named after this
-   computer, so two laptops never share one
+4. asks which address to use (e.g. `movies.example.com` — type it and press
+   Enter; next time it suggests the one it has), and sets up a tunnel for it
+   named after this computer, so two laptops never share one
 5. puts a **Start Stream** button on the desktop, and makes it start by itself,
    minimised, whenever you log in
 6. asks whether to keep the laptop awake while it is on the charger — a
@@ -49,6 +51,12 @@ running it again is always safe:
 
 Your domain has to be on Cloudflare. Setting up a second laptop moves the
 address to it; the first one stops answering.
+
+It uses no PowerShell, deliberately: fetching a script and running it is what
+security software exists to stop. **A work laptop may block it anyway** — and
+that is the employer's call to make, not something to work around. On a
+machine where it will not run, `start.cmd` in the project folder does the same
+job as the button.
 
 ## Every time
 
@@ -309,7 +317,9 @@ node test/e2e/connection.mjs  # what each side is told as connections come and g
 
 | File | Does |
 |---|---|
-| `Install-Stream.cmd` / `install.ps1` | one-double-click set-up of a Windows laptop |
+| `Install-Stream.cmd` | set-up, first half: Node, Git, and the project |
+| `bin/install.js` | set-up, second half: cloudflared, the address, the buttons |
+| `src/setup.js` | the set-up's decisions: tunnel names, real Desktop and Startup folders |
 | `start.cmd` / `start.sh` | the Start Stream button: update, then start |
 | `bin/stream.js` | passcodes, the tunnel, the READY banner |
 | `bin/setup-tunnel.js` | one-time wiring of a permanent address on your domain |

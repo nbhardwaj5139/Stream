@@ -7,6 +7,10 @@ REM and cmd.exe can fail to find a label in a file like that.
 cd /d "%~dp0"
 title Stream - leave this window open
 
+REM Where the installer puts Node, Git and cloudflared. A fresh install is not
+REM always on PATH until the next login, and this is what runs at login.
+set "PATH=%PATH%;%ProgramFiles%\nodejs;%ProgramFiles%\Git\cmd;%ProgramFiles%\cloudflared;%ProgramFiles(x86)%\cloudflared"
+
 REM Pull quietly, and never let a failed update stop the evening: being a day
 REM behind is a far smaller problem than not starting at all.
 where git >nul 2>&1 && git rev-parse --is-inside-work-tree >nul 2>&1 && (
