@@ -11,13 +11,17 @@ REM Where the installer puts Node, Git and cloudflared. A fresh install is not
 REM always on PATH until the next login, and this is what runs at login.
 set "PATH=%PATH%;%ProgramFiles%\nodejs;%ProgramFiles%\Git\cmd;%ProgramFiles%\cloudflared;%ProgramFiles(x86)%\cloudflared"
 
-REM Pull quietly, and never let a failed update stop the evening: being a day
-REM behind is a far smaller problem than not starting at all.
-where git >nul 2>&1 && git rev-parse --is-inside-work-tree >nul 2>&1 && (
-  echo Checking for updates...
-  git pull --ff-only --quiet || echo   Could not update. Carrying on with what is already here.
+REM Everything from here is one bracketed block, on purpose. cmd.exe reads a
+REM script from disk as it goes, and the update below can replace this very
+REM file mid-run; it would then carry on reading the new version from the old
+REM position, and run whatever happens to be there. A block is read whole
+REM before any of it runs, and the exit at its end stops cmd reading on.
+(
+  REM Pull quietly, and never let a failed update stop the evening: being a
+  REM day behind is a far smaller problem than not starting at all.
+  where git >nul 2>&1 && git rev-parse --is-inside-work-tree >nul 2>&1 && echo Checking for updates... && (git pull --ff-only --quiet || echo   Could not update. Carrying on with what is already here.)
+  echo.
+  node bin\stream.js %*
+  if errorlevel 1 pause
+  exit /b
 )
-echo.
-
-node bin\stream.js %*
-if errorlevel 1 pause
