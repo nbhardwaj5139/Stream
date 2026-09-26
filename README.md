@@ -92,6 +92,15 @@ alone — her passcode can neither read nor change any of it:
 All three are kept on your laptop, not in this project, and are still there
 next time. Change them as often as you like.
 
+The note box has a row of emoji under it, like the chat does.
+
+While you share, your page shows a live preview of exactly what they are
+getting, with a small *Live* strip in the corner saying who is watching. The
+preview is muted, so you do not hear the film twice. It shows itself inside
+itself, like a hall of mirrors, while this window is on the screen you are
+sharing; that is normal, and not what they see. *Note & look* on the strip
+brings the box above back if you want to change something mid-film.
+
 The handwriting is Dancing Script, bundled so it looks the same on every
 device, under the SIL Open Font License (`licenses/dancing-script-OFL.txt`).
 

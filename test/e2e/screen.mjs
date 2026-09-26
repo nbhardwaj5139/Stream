@@ -96,6 +96,24 @@ try {
   const stats = await host.textContent('#link-text');
   check('the host can see what it is sending', /kbps|Mbps/.test(stats ?? ''), stats?.trim());
 
+  // The host sees what is going out, not a card over it.
+  const preview = await host.evaluate(() => {
+    const video = document.querySelector('#video');
+    return {
+      showing: !video.hidden && video.videoWidth > 0 && document.querySelector('#placeholder').hidden,
+      muted: video.muted,
+      strip: !document.querySelector('#share-strip').hidden,
+    };
+  });
+  check('the host sees a live preview of their share', preview.showing, JSON.stringify(preview));
+  check('muted, so the film is not heard twice', preview.muted);
+  check('with a small strip saying it is live', preview.strip);
+  await host.click('#btn-share-view');
+  check('the note and look are a button away',
+    await host.evaluate(() => !document.querySelector('#tonight').hidden && document.querySelector('#video').hidden));
+  await host.click('#btn-share-view');
+  check('and back to the preview', await host.evaluate(() => !document.querySelector('#video').hidden));
+
   // The recovery path: take the viewer's picture away without touching the
   // host, which is what a peer that goes away without saying so looks like.
   // Nothing on the host's side notices, so the viewer has to ask.
@@ -146,6 +164,16 @@ try {
   }
   const stillSharing = await host.textContent('#btn-share');
   check('the host never had to press Share again', /Stop sharing/.test(stillSharing ?? ''), stillSharing?.trim());
+  check('and still sees the preview after taking the share back',
+    await host.evaluate(() => { const v = document.querySelector('#video'); return !v.hidden && v.videoWidth > 0; }));
+
+  await host.click('#btn-share');
+  const stopped = await host.evaluate(() => ({
+    preview: document.querySelector('#video').srcObject,
+    strip: document.querySelector('#share-strip').hidden,
+    card: !document.querySelector('#placeholder').hidden,
+  }));
+  check('stopping takes the preview and the strip away', !stopped.preview && stopped.strip && stopped.card, JSON.stringify(stopped));
 } finally {
   await hostBrowser.close();
   await guestBrowser.close();

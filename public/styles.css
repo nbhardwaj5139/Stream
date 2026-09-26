@@ -92,6 +92,7 @@ button, input, select { font: inherit; color: inherit; }
   position: relative;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
   background: #000;
   display: flex;
   align-items: center;
@@ -107,13 +108,64 @@ button, input, select { font: inherit; color: inherit; }
 }
 #video[hidden] { display: none; }
 
+/* The host's own view while sharing: small, in a corner, out of the way of
+   the preview it sits on. */
+.share-strip {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 24px);
+  padding: 6px 6px 6px 12px;
+  border-radius: 999px;
+  background: rgba(10, 10, 14, .62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, .10);
+  color: #eef0f6;
+  font-size: 12.5px;
+}
+.share-strip[hidden] { display: none; }
+.share-strip > span:not(.share-dot) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.share-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff5f6d;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.share-strip-button {
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 11px;
+  background: rgba(255, 255, 255, .14);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.share-strip-button:hover { background: rgba(255, 255, 255, .22); }
+@media (prefers-reduced-motion: reduce) {
+  .share-dot { animation: none; }
+}
+
 /* ----------------------------------------------------------- placeholder -- */
 
 .placeholder {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
+  /* Centred when it fits; when it does not — the host's options on a short
+     laptop screen — it scrolls inside the picture area instead of spilling
+     over the buttons below it. Auto margins centre without ever pushing the
+     top out of reach, which grid centring does. */
+  display: flex;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   text-align: center;
   padding: 24px;
   background:
@@ -121,7 +173,7 @@ button, input, select { font: inherit; color: inherit; }
     linear-gradient(180deg, #10131b 0%, #08090d 100%);
 }
 .placeholder[hidden] { display: none; }
-.placeholder-inner { max-width: 380px; }
+.placeholder-inner { width: 100%; max-width: 380px; margin: auto; }
 
 .placeholder-icon {
   width: 56px;
@@ -1004,7 +1056,7 @@ body.centered {
   --heart: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z'/%3E%3C/svg%3E");
 }
 
-[data-theme="cozy"] .placeholder { background: var(--room); overflow: hidden; }
+[data-theme="cozy"] .placeholder { background: var(--room); overflow-x: hidden; }
 [data-theme="cozy"] .placeholder-inner { position: relative; z-index: 1; }
 [data-theme="cozy"] .gate { background: var(--room); overflow-x: hidden; }
 [data-theme="cozy"] .overlay { background: rgba(22, 8, 15, .72); }

@@ -38,6 +38,9 @@ const dom = {
   composer: el('composer'),
   chatInput: el('chat-input'),
   emojiRow: el('emoji-row'),
+  shareStrip: el('share-strip'),
+  shareStripText: el('share-strip-text'),
+  btnShareView: el('btn-share-view'),
   surpriseEmoji: el('surprise-emoji'),
   tonight: el('tonight'),
   surpriseInput: el('surprise-input'),
@@ -89,6 +92,8 @@ const state = {
   // have since dropped off the site.
   lastHost: null,
   hostGone: false,
+  // Host side, while sharing: the live preview, or the note-and-look card.
+  shareView: 'preview',
 };
 
 // How long a viewer keeps the last picture while the sharer's connection to
@@ -679,11 +684,31 @@ function updateSyncBadge() {
 // ---------------------------------------------------------------- render --
 
 // What the host sees while sharing: not their own screen back again.
+// By default, a live preview of what is going out — the host wants to see
+// it, and the note and the look can wait behind a button. The preview is
+// muted: the sound is already coming out of this laptop once.
 function renderSharingCard() {
+  hideOverlay();
+  const watching = listNames(others(), ['is watching', 'are watching']) || 'Nobody has joined yet';
+  dom.shareStrip.hidden = false;
+  dom.shareStripText.textContent = `Live · ${watching}`;
+  dom.btnShareView.textContent = state.shareView === 'card' ? 'Back to preview' : 'Note & look';
+
+  if (state.shareView !== 'card' && screenShare.stream) {
+    if (dom.video.srcObject !== screenShare.stream) {
+      dom.video.srcObject = screenShare.stream;
+    }
+    dom.video.muted = true;
+    dom.video.controls = false;
+    dom.video.hidden = false;
+    dom.placeholder.hidden = true;
+    dom.video.play().catch(() => {});
+    return;
+  }
+
   dom.video.hidden = true;
   dom.placeholder.hidden = false;
   dom.tonight.hidden = false;
-  hideOverlay();
 
   dom.placeholderTitle.classList.remove('love');
   dom.placeholderText.classList.remove('trouble');
@@ -699,6 +724,7 @@ function renderSharingCard() {
 function renderWaiting() {
   dom.video.hidden = true;
   dom.placeholder.hidden = false;
+  dom.shareStrip.hidden = true;
 
   dom.tonight.hidden = state.role !== 'host';
   dom.placeholderTitle.classList.remove('love');
@@ -1220,6 +1246,9 @@ const screenShare = new ScreenShare({
     dom.btnShare.querySelector('span').textContent = 'Share screen';
     dom.btnShare.setAttribute('aria-pressed', 'false');
     state.reclaimShare = false;
+    // The preview was this laptop's own capture; it has ended.
+    dom.video.srcObject = null;
+    dom.video.controls = true;
     for (const entry of dropNotices.values()) clearTimeout(entry.timer);
     dropNotices.clear();
     send({ type: 'share', on: false });
@@ -1326,15 +1355,18 @@ async function startSharing() {
   dom.btnShare.setAttribute('aria-pressed', 'true');
   send({ type: 'share', on: true });
 
-  // Deliberately no preview: sharing the whole screen means a preview of it
-  // sits inside itself, repeating into infinity. The host is looking at the
-  // real thing already.
-  dom.video.srcObject = null;
+  state.shareView = 'preview';
   renderSharingCard();
   renderTitle();
 
   for (const viewer of others()) screenShare.offerTo(viewer.id);
 }
+
+dom.btnShareView.addEventListener('click', (event) => {
+  event.stopPropagation();
+  state.shareView = state.shareView === 'card' ? 'preview' : 'card';
+  if (screenShare.sharing) renderSharingCard();
+});
 
 dom.btnShare.addEventListener('click', () => {
   if (screenShare.sharing) {
